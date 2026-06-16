@@ -661,3 +661,7 @@ def main():
 
     print("Бот успешно запущен!")
     application.run_polling(drop_pending_updates=True)
+
+
+if __name__ == '__main__':
+    main()
