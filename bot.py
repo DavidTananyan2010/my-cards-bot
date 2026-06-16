@@ -4,7 +4,7 @@ import os
 import asyncio
 import sqlite3
 import threading  # Добавили для фонового веб-сервера
-from http.server import SimpleHTTPRequestHandler, HTTPServer # Добавили сервер
+from http.server import SimpleHTTPRequestHandler, HTTPServer # Добавили server
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
@@ -24,7 +24,7 @@ DB_FILE = "bot_database.db"
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     server_address = ("", port)
-    # Создаем простейший сервер, который на любые запросы отвечает 200 OK
+    # Создаем простейший server, который на любые запросы отвечает 200 OK
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             pass # Чтобы не спамить в логи Render пустыми запросами
@@ -172,7 +172,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
 
-# ОБНОВЛЕННАЯ ФУНКЦИЯ: Складывает дубликаты в x(цифра)
+# Функция складывает дубликаты в x(цифра)
 async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_cards = get_user_cards(user_id)
@@ -201,7 +201,7 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# ОБНОВЛЕННАЯ ФУНКЦИЯ: Новые настроенные шансы выпадения
+# Настроенные шансы выпадения (1%, 4%, 10%, 25%, 60%)
 async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
@@ -212,7 +212,7 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
-        # Настройка новых вероятностей
+        # Настройка вероятностей
         if rarity_roll <= 1.0:
             rarity = "🌌 Абсолютная"
         elif rarity_roll <= 5.0:
@@ -384,10 +384,12 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ: Теперь отображает игроков даже с 0 монет
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT first_name, coins FROM users WHERE coins > 0 ORDER BY coins DESC LIMIT 10')
+    # Убрали условие WHERE coins > 0, чтобы топ не обнулялся полностью
+    cursor.execute('SELECT first_name, coins FROM users ORDER BY coins DESC LIMIT 10')
     leaders = cursor.fetchall()
     conn.close()
 
