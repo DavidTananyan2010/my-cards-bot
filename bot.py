@@ -58,9 +58,9 @@ COOLDOWN_TIME = 1.5
 # ==================== СТИЛЬНАЯ КЛАВИАТУРА КНОПОК ====================
 def get_main_keyboard():
     buttons = [
-        ["📦 Открыть пак", "👤 Мой профиль"],      # Ряд 1
-        ["🗂️ Моя коллекция", "🏆 ТОП игроков"],    # Ряд 2
-        ["🛍️ Магазин", "⚠️ Сброс прогресса"]       # Ряд 3
+        ["📦 Открыть пак", "👤 Мой профиль"],      
+        ["🗂️ Моя коллекция", "🏆 ТОП игроков"],    
+        ["🛍️ Магазин", "⚠️ Сброс прогресса"]       
     ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
@@ -229,6 +229,38 @@ async def open_shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("🛍️ *Главное меню Торгового Центра DAcards.*\nВыберите необходимый отдел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+# ==================== НОВЫЕ АДМИНИСТРАТИВНЫЕ КОМАНДЫ ====================
+async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    all_users = list(users_col.find())
+    if not all_users:
+        await update.message.reply_text("База данных пользователей пуста.")
+        return
+        
+    text = f"👥 *СПИСОК ВСЕХ ИГРОКОВ БОТА ({len(all_users)}):*\n\n"
+    for user in all_users:
+        text += f"• *{user.get('first_name', 'Игрок')}* | ID: `{user.get('user_id')}`\n  🪙 Монеты: {user.get('coins', 0)} | 🎖️ Титул: {user.get('active_title', 'Нет')}\n\n"
+        
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def admin_players_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+        
+    all_users = list(users_col.find())
+    if not all_users:
+        await update.message.reply_text("Нет игроков для управления.")
+        return
+        
+    kb = []
+    for user in all_users:
+        kb.append([InlineKeyboardButton(f"⚙️ Управлять: {user.get('first_name', 'Игрок')}", callback_data=f"adm_manage_{user.get('user_id')}")])
+        
+    await update.message.reply_text("🛠️ *Панель управления игроками.*\nВыберите пользователя:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+
 # ==================== CALLBACK-ОБРАБОТЧИК КНОПОК ====================
 async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -236,8 +268,57 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     data = query.data
     
-    # --- БЕЗОПАСНЫЙ СБРОС ДАННЫХ ---
-    if data == "confirm_full_reset":
+    # --- ЛОГИКА АДМИН-ПАНЕЛИ (ADMIN_PLAYERS) ---
+    if data.startswith("adm_manage_"):
+        if user_id != ADMIN_ID: return
+        target_uid = int(data.replace("adm_manage_", ""))
+        target_user = users_col.find_one({"user_id": target_uid})
+        
+        if not target_user:
+            await query.edit_message_text("Пользователь не найден.")
+            return
+            
+        text = f"👤 *Управление игроком:* {target_user.get('first_name')}\nID: `{target_uid}`\nБаланс: {target_user.get('coins', 0)} 🪙"
+        kb = [
+            [InlineKeyboardButton("➕ Дать 500 монет", callback_data=f"adm_give_500_{target_uid}"),
+             InlineKeyboardButton("➖ Забрать 500 монет", callback_data=f"adm_take_500_{target_uid}")],
+            [InlineKeyboardButton("❌ Обнулить игрока", callback_data=f"adm_reset_player_{target_uid}")],
+            [InlineKeyboardButton("⬅️ К списку игроков", callback_data="adm_back_to_list")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+        
+    elif data.startswith("adm_give_500_"):
+        if user_id != ADMIN_ID: return
+        target_uid = int(data.replace("adm_give_500_", ""))
+        update_user_coins(target_uid, 500)
+        await query.edit_message_text(f"✅ Успешно выдано +500 монет игроку `{target_uid}`!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data=f"adm_manage_{target_uid}")]]) )
+        return
+
+    elif data.startswith("adm_take_500_"):
+        if user_id != ADMIN_ID: return
+        target_uid = int(data.replace("adm_take_500_", ""))
+        update_user_coins(target_uid, -500)
+        await query.edit_message_text(f"✅ Успешно изъято -500 монет у игрока `{target_uid}`!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data=f"adm_manage_{target_uid}")]]) )
+        return
+
+    elif data.startswith("adm_reset_player_"):
+        if user_id != ADMIN_ID: return
+        target_uid = int(data.replace("adm_reset_player_", ""))
+        users_col.update_one({"user_id": target_uid}, {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}})
+        collections_col.delete_many({"user_id": target_uid})
+        await query.edit_message_text(f"💥 Полный сброс игрока `{target_uid}` выполнен!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm_back_to_list")]]) )
+        return
+
+    elif data == "adm_back_to_list":
+        if user_id != ADMIN_ID: return
+        all_users = list(users_col.find())
+        kb = [[InlineKeyboardButton(f"⚙️ Управлять: {u.get('first_name')}", callback_data=f"adm_manage_{u.get('user_id')}")] for u in all_users]
+        await query.edit_message_text("🛠️ *Панель управления игроками.*\nВыберите пользователя:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    # --- БЕЗОПАСНЫЙ СБРОС ДАННЫХ ПОЛЬЗОВАТЕЛЯ ---
+    elif data == "confirm_full_reset":
         users_col.update_one(
             {"user_id": user_id},
             {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}}
@@ -369,7 +450,7 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         set_user_title(user_id, title_to_wear)
         await query.edit_message_text(f"👑 Изменение стиля! Вы успешно надели титул: *{title_to_wear}*", parse_mode="Markdown")
 
-# ==================== АДМИН-КОМАНДЫ ====================
+# ==================== СТАРЫЕ АДМИН-КОМАНДЫ (ЧЕРЕЗ АРГУМЕНТЫ) ====================
 async def admin_give_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
@@ -399,9 +480,11 @@ def main():
     application.add_handler(MessageHandler(filters.Text("🗂️ Моя коллекция"), collection_handler))
     application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
     application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
-    
-    # ИСПРАВЛЕНО: Теперь кнопка завернута в правильный MessageHandler
     application.add_handler(MessageHandler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler))
+    
+    # Регистрация новых админских команд
+    application.add_handler(CommandHandler("users_list", users_list_command))
+    application.add_handler(CommandHandler("admin_players", admin_players_command))
     
     application.add_handler(CommandHandler("givecoins", admin_give_coins))
     application.add_handler(CommandHandler("givetitle", admin_give_title))
