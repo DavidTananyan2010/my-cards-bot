@@ -172,6 +172,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
 
+# ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ФУНКЦИЯ ВЫВОДА КОЛЛЕКЦИИ
 async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_cards = get_user_cards(user_id)
@@ -180,9 +181,12 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
         return
 
-    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:\n\n"
+    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:**\n\n"
     for idx, card in enumerate(user_cards, 1):
-        text += f"{idx}. ** [{card['rarity']}] — {card['price']} 🪙\n"
+        name = card.get('name') or "Без названия"
+        rarity = card.get('rarity', 'Обычная')
+        price = card.get('price', 0)
+        text += f"{idx}. **{name}** [{rarity}] — {price} 🪙\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -232,17 +236,20 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     add_card_to_db(user_id, random_card)
 
+    # ИСПРАВЛЕНО: Добавлен parse_mode для жирного текста под фото
     if str(path_to_image).startswith("AgAC"):
         await update.message.reply_photo(
             photo=path_to_image,
-            caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}"
+            caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}",
+            parse_mode="Markdown"
         )
     else:
         try:
             with open(f"cards/{path_to_image}", "rb") as photo_file:
                 await update.message.reply_photo(
                     photo=photo_file,
-                    caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}"
+                    caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}",
+                    parse_mode="Markdown"
                 )
         except FileNotFoundError:
             await update.message.reply_text(
