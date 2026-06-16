@@ -665,3 +665,29 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+async def admin_list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Проверка на админа
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Эта функция доступна только администратору.")
+        return
+
+    users = get_all_users()
+    
+    if not users:
+        await update.message.reply_text("📭 В базе данных пока нет зарегистрированных пользователей.")
+        return
+
+    text = "👥 **СПИСОК УЧАСТНИКОВ БОТА:**\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Формируем список: ID | Имя
+    for uid, name in users:
+        text += f"👤 `{uid}` — {name}\n"
+    
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"Всего пользователей: {len(users)}"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
