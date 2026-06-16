@@ -130,16 +130,17 @@ def get_user_cards(user_id):
     return [{"name": r[0], "rarity": r[1], "file": r[2], "price": r[3]} for r in rows]
 
 
-def get_rank(cards_count):
-    if cards_count < 10:
+# ИСПРАВЛЕНО: Теперь ранг зависит от числа открытых паков, а не от размера текущей коллекции
+def get_rank(packs_count):
+    if packs_count < 10:
         return "👶 Скиталец"
-    elif cards_count < 100:
+    elif packs_count < 100:
         return "🔰 Новичок"
-    elif cards_count < 1000:
+    elif packs_count < 1000:
         return "⚔️ Профи"
-    elif cards_count < 10000:
+    elif packs_count < 10000:
         return "👑 Владелец карт"
-    elif cards_count < 50000:
+    elif packs_count < 50000:
         return "⚡ Бог карт"
     else:
         return "🌌 Абсолютное Божество DAcards"
@@ -171,15 +172,16 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_cards = len(user_cards)
 
     coins, packs_opened = get_user_stats(user_id)
-    rank = get_rank(total_cards)
+    # ИСПРАВЛЕНО: Передаем packs_opened, чтобы ранг оставался стабильным при продаже карт
+    rank = get_rank(packs_opened)
 
     profile_text = (
         "━━━━━━━━━━━━━━\n"
         "👤 **ПРОФИЛЬ**\n\n"
-        f"🗂 **Карт:** {total_cards}\n"
+        f"🗂 **Карт в наличии:** {total_cards}\n"
         f"💰 **Монет:** {coins}\n"
         f"🏆 **Ранг:** {rank}\n\n"
-        f"📦 **Паков открыто:** {packs_opened}\n"
+        f"📦 **Паков открыто всего:** {packs_opened}\n"
         "━━━━━━━━━━━━━━"
     )
     await update.message.reply_text(profile_text, parse_mode="Markdown")
@@ -422,15 +424,22 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+# ИСПРАВЛЕНО: Добавлен админ-фильтр, чтобы посторонние пользователи не сбрасывали чужой прогресс
 async def reset_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Эта кнопка предназначена только для тестирования главным Администратором!")
+        return
+
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    # Сбрасываем прогресс ТОЛЬКО для тестирующего админа
     cursor.execute('DELETE FROM collections WHERE user_id = ?', (user_id,))
     cursor.execute('UPDATE users SET coins = 0, packs_opened = 0 WHERE user_id = ?', (user_id,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("🧹 Прогресс полностью сброшен!")
+    await update.message.reply_text("🧹 Твой личный администраторский прогресс успешно сброшен!")
 
 
 async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
