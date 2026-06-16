@@ -3,10 +3,12 @@ import random
 import os
 import asyncio
 import sqlite3
+import threading  # Добавили для фонового веб-сервера
+from http.server import SimpleHTTPRequestHandler, HTTPServer # Добавили сервер
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Импортируем склад карт из соседнего файла cards.py (запятую в конце убрали)
+# Импортируем склад карт из соседнего файла cards.py
 from cards import CARDS
 
 logging.basicConfig(
@@ -18,12 +20,25 @@ ADMIN_ID = 7501899378
 DB_FILE = "bot_database.db"
 
 
-# ==================== ФУНКЦИИ РАБОТЫ С БАЗОЙ ДАННЫХ ====================
+# ==================== ФУНКЦИЯ ДЛЯ ОБМАНА RENDER (ЖИВОЙ ПОРТ) ====================
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server_address = ("", port)
+    # Создаем простейший сервер, который на любые запросы отвечает 200 OK
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass # Чтобы не спамить в логи Render пустыми запросами
+    
+    httpd = HTTPServer(server_address, QuietHandler)
+    print(f"Встроенный веб-сервер запущен на порту {port}")
+    httpd.serve_forever()
+
+
+# ==================== ФУНКЦИЯ РАБОТЫ С БАЗОЙ ДАННЫХ ====================
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # Таблица пользователей
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS users
                    (
@@ -33,14 +48,11 @@ def init_db():
                        packs_opened INTEGER DEFAULT 0
                    )
                    ''')
-
-    # Хак на случай старой БД: добавляем колонку, если её не было
     try:
         cursor.execute('ALTER TABLE users ADD COLUMN packs_opened INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
 
-    # Таблица сохраненных карточек
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS collections
                    (
@@ -105,7 +117,6 @@ def get_user_cards(user_id):
     return [{"name": r[0], "rarity": r[1], "file": r[2], "price": r[3]} for r in rows]
 
 
-# ==================== ЛОГИКА РАНГОВ ====================
 def get_rank(cards_count):
     if cards_count < 10:
         return "👶 Скиталец"
@@ -169,7 +180,9 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
         return
 
-    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:** [{card['rarity']}] — {card['price']} 🪙\n"
+    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:\n\n"
+    for idx, card in enumerate(user_cards, 1):
+        text += f"{idx}. ** [{card['rarity']}] — {card['price']} 🪙\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -182,7 +195,6 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting_message = await update.message.reply_text("🃏 Открывается карта...")
     await asyncio.sleep(0.2)
 
-    # Функция генерации редкости
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
         if rarity_roll <= 0.1:
@@ -205,26 +217,21 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return random.choice(cards_of_rarity)
         return random.choice(CARDS)
 
-    # ВЫЗЫВАЕМ функцию, чтобы получить карту
     random_card = get_random_card()
     path_to_image = random_card.get("file")
 
-    # Счётчик открытий в профиле увеличиваем в любом случае
     increment_packs(user_id)
     await waiting_message.delete()
 
-    # ПРОВЕРКА НА ПУСТЫШКУ: Если цена 0 или в имени есть слово "пуста"
     if random_card['price'] == 0 or "пуста" in random_card['name'].lower():
         await update.message.reply_text(
             f"🃏 **Тебе выпала карта!**\n\n"
             f"😔 _Эта карта пуста, открой ещё..._"
         )
-        return  # Конец для пустышки. Она НЕ сохранится в БД!
+        return
 
-    # === ЕСЛИ КОД ПОШЕЛ ДАЛЬШЕ — ЗНАЧИТ ЭТО ХОРОШАЯ КАРТА ===
     add_card_to_db(user_id, random_card)
 
-    # Проверяем вид картинки
     if str(path_to_image).startswith("AgAC"):
         await update.message.reply_photo(
             photo=path_to_image,
@@ -243,7 +250,6 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
-# ==================== ИНТЕРАКТИВНЫЙ МАГАЗИН ====================
 async def shop_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_cards = get_user_cards(user_id)
@@ -360,8 +366,6 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ==================== ОСТАЛЬНЫЕ КОМАНДЫ ====================
-
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -406,4 +410,31 @@ async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-#
+# ==================== ГЛАВНЫЙ ЗАПУСК ====================
+def main():
+    init_db()
+
+    # Запускаем веб-сервер для Render в отдельном потоке ДО старта бота
+    srv_thread = threading.Thread(target=run_health_server, daemon=True)
+    srv_thread.start()
+
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("admin_players", admin_players))
+
+    application.add_handler(MessageHandler(filters.Text("🎁 Открыть пак"), open_pack))
+    application.add_handler(MessageHandler(filters.Text("🗂 Моя коллекция"), show_collection))
+    application.add_handler(MessageHandler(filters.Text("🏆 Топ игроков"), show_leaderboard))
+    application.add_handler(MessageHandler(filters.Text("🏪 Магазин-Обменник"), shop_exchange))
+    application.add_handler(MessageHandler(filters.Text("🧹 Сбросить прогресс"), reset_statistics))
+    application.add_handler(MessageHandler(filters.Text("👤 Профиль"), show_profile))
+
+    application.add_handler(CallbackQueryHandler(shop_callback, pattern="^shop_"))
+
+    print("Бот успешно запущен!")
+    application.run_polling(drop_pending_updates=True)
+
+
+if __name__ == '__main__':
+    main()
