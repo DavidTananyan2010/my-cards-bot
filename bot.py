@@ -43,10 +43,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
-# Токен берется из переменных окружения Render, либо используется твой дефолтный
+# Настройки бота
 TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg")
 ADMIN_ID = 7501899378
 DB_FILE = "bot_database.db"
+LOG_CHAT_ID = -1001234567890  # ⚠️ ЗАМЕНИ НА ID СВОЕГО ИГРОВОГО ЧАТА (с минусом в начале)
 
 
 # ==================== ВЕБ-СЕРВЕР ДЛЯ RENDER ====================
@@ -161,6 +162,15 @@ def get_user_cards(user_id):
     return [{"name": r[0], "rarity": r[1], "file": r[2], "price": r[3]} for r in rows]
 
 
+def get_all_users():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, first_name FROM users')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def get_rank(packs_count):
     if packs_count < 10:
         return "👶 Скиталец"
@@ -219,9 +229,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ['✨ Открыть пак ✨'],
         ['🗂 Моя Коллекция', '🏪 Магазин'],
-        ['👤 Профиль', '🏆 Топ Игроков'],
-        ['🧹 Сброс']
+        ['👤 Профиль', '🏆 Топ Игроков']
     ]
+    # Если зашел админ, добавляем ему кнопку сброса в конец панели
+    if user_id == ADMIN_ID:
+        keyboard.append(['🧹 Сброс'])
+
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, input_field_placeholder="Выберите действие...")
 
     welcome_text = (
@@ -445,7 +458,7 @@ async def send_shop_message(message, card_name, current_count, max_count, price,
         await message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
-# ==================== ОБЩИЙ ОБРАБОТЧИК ИНЛАЙН-КНОПОКМАГАЗИНА ====================
+# ==================== ОБЩИЙ ОБРАБОТЧИК ИНЛАЙН-КНОПОК МАГАЗИНА ====================
 
 async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -453,13 +466,11 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
 
     try:
-        # Для покупки ответим позже с кастомным alert, для всех остальных кнопок — гасим часики сразу
         if not data.startswith("buytitle_"): 
             await query.answer()
     except Exception as e:
         logging.error(f"Ошибка query.answer: {e}")
 
-    # Возврат в главное меню магазина
     if data == "mainshop_back":
         context.user_data.pop('shop_card', None)
         context.user_data.pop('shop_count', None)
@@ -480,7 +491,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
-    # Переход к сдаче дубликатов
     if data == "mainshop_duplicates":
         success = await shop_exchange_logic(user_id, query.message, context, is_callback=True)
         if success:
@@ -494,7 +504,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         return
 
-    # Логика каунтера сдачи дубликатов
     if data in ["shop_plus", "shop_minus", "shop_confirm"]:
         card_name = context.user_data.get('shop_card')
         current_count = context.user_data.get('shop_count', 1)
@@ -524,7 +533,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.message.edit_text(f"✅ **СДЕЛКА УСПЕШНО ЗАВЕРШЕНА!**\n\n📦 Реализовано карт `{card_name}`: {current_count} шт.\n💰 Казна пополнена на: **+{total_earned}** монет 🪙", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Вернуться в магазин", callback_data="mainshop_back")]]))
         return
 
-    # Переход к разделу титулов
     if data == "mainshop_titles" or data == "titlemenu_back":
         text = (
             "🏅 **БИРЖА ПРЕМИУМ-ПРЕФИКСОВ**\n"
@@ -539,7 +547,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
-    # Витрина титулов (покупка)
     if data == "titlemenu_buy":
         owned = get_owned_titles(user_id)
         keyboard = []
@@ -555,7 +562,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="mainshop_titles")])
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    # Гардеробная (надеть / сбросить)
     elif data == "titlemenu_my":
         owned = get_owned_titles(user_id)
         coins, packs, active_title = get_user_stats(user_id)
@@ -579,7 +585,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="mainshop_titles")])
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    # Обработка клика по кнопке "Приобрести"
     elif data.startswith("buytitle_"):
         title_id = data.split("_")[1]
         if title_id in SHOP_TITLES:
@@ -593,6 +598,21 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"С вашего баланса списано {info['price']} 🪙.\n\nПерейдите в раздел управления, чтобы закрепить его.", 
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💼 Открыть гардероб", callback_data="titlemenu_my")]])
                 )
+                
+                # --- УВЕДОМЛЕНИЕ В ИГРОВОЙ ЧАТ О ПОКУПКЕ ---
+                try:
+                    notification = (
+                        f"📢 **НОВАЯ ПОКУПКА В МАГАЗИНЕ!**\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 **Игрок:** {query.from_user.first_name}\n"
+                        f"🏅 **Приобрёл префикс:** {info['name']}\n"
+                        f"💰 **Цена сделки:** {info['price']} 🪙\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Поздравляем с повышением статуса! 🎉"
+                    )
+                    await context.bot.send_message(chat_id=LOG_CHAT_ID, text=notification, parse_mode="Markdown")
+                except Exception as e:
+                    logging.error(f"Не удалось отправить уведомление в чат: {e}")
             else:
                 await query.answer("❌ Ошибка: Недостаточно монет!", show_alert=True)
                 await query.message.edit_text(
@@ -601,7 +621,6 @@ async def global_shop_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Вернуться к витрине", callback_data="titlemenu_buy")]])
                 )
 
-    # Обработка клика по кнопке экипировки титула
     elif data.startswith("equiptitle_"):
         title_id = data.split("_")[1]
         if title_id == "none":
@@ -665,6 +684,19 @@ async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📂 Реестр аккаунтов в Базе Данных:\n" + "\n".join([f"• {p[0]} — {p[1]} 🪙" for p in players])
     await update.message.reply_text(text)
 
+# Скрытая админ-команда для вывода красивого списка участников с ID
+async def admin_list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    users = get_all_users()
+    if not users:
+        await update.message.reply_text("🗂 База данных пуста.")
+        return
+    text = "👥 **СПИСОК УЧАСТНИКОВ В БОТЕ:**\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += "\n".join([f"👤 `{u[0]}` — {u[1]}" for u in users])
+    await update.message.reply_text(text, parse_mode="Markdown")
+
 
 # ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
 def main():
@@ -677,6 +709,7 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin_players", admin_players))
+    application.add_handler(CommandHandler("users_list", admin_list_users))
 
     application.add_handler(MessageHandler(filters.Text("✨ Открыть пак ✨"), open_pack))
     application.add_handler(MessageHandler(filters.Text("🗂 Моя Коллекция"), show_collection))
