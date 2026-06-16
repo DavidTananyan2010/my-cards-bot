@@ -172,7 +172,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
 
-# ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ФУНКЦИЯ ВЫВОДА КОЛЛЕКЦИИ
+# ОБНОВЛЕННАЯ ФУНКЦИЯ: Складывает дубликаты в x(цифра)
 async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_cards = get_user_cards(user_id)
@@ -181,16 +181,27 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
         return
 
-    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:**\n\n"
-    for idx, card in enumerate(user_cards, 1):
+    # Группируем карты по их уникальному имени
+    grouped_cards = {}
+    for card in user_cards:
         name = card.get('name') or "Без названия"
-        rarity = card.get('rarity', 'Обычная')
-        price = card.get('price', 0)
-        text += f"{idx}. **{name}** [{rarity}] — {price} 🪙\n"
+        if name not in grouped_cards:
+            grouped_cards[name] = {
+                "rarity": card.get('rarity', 'Обычная'),
+                "price": card.get('price', 0),
+                "count": 0
+            }
+        grouped_cards[name]["count"] += 1
+
+    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:**\n\n"
+    for idx, (name, info) in enumerate(grouped_cards.items(), 1):
+        count_str = f" *(x{info['count']})*" if info['count'] > 1 else ""
+        text += f"{idx}. **{name}** [{info['rarity']}] — {info['price']} 🪙{count_str}\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+# ОБНОВЛЕННАЯ ФУНКЦИЯ: Новые настроенные шансы выпадения
 async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
@@ -201,13 +212,14 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
-        if rarity_roll <= 0.1:
-            rarity = "👑 Абсолютная"
-        elif rarity_roll <= 1:
-            rarity = "✨ Божественная"
-        elif rarity_roll <= 10:
+        # Настройка новых вероятностей
+        if rarity_roll <= 1.0:
+            rarity = "🌌 Абсолютная"
+        elif rarity_roll <= 5.0:
+            rarity = "👑 Божественная"
+        elif rarity_roll <= 15.0:
             rarity = "🔮 Секретная"
-        elif rarity_roll <= 35:
+        elif rarity_roll <= 40.0:
             rarity = "⭐ Редкая"
         else:
             rarity = "⭐ Обычная"
@@ -236,7 +248,6 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     add_card_to_db(user_id, random_card)
 
-    # ИСПРАВЛЕНО: Добавлен parse_mode для жирного текста под фото
     if str(path_to_image).startswith("AgAC"):
         await update.message.reply_photo(
             photo=path_to_image,
