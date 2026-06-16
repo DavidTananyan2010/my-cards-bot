@@ -5,7 +5,7 @@ REAL_CARDS = [
 
     {"file": "3.jpg", "name": "👻losnya🐂🌲", "rarity": "🔮 Секретная", "price": 100},
     {"file": "7.jpg", "name": "Призрак Леса 👻", "rarity": "⭐ Редкая", "price": 30},
-    {"file": "6.jpg", "name": "Таинственный Лось 🦌", "rarity": "🔮 Секретная", "price": 100},
+    {"file": "6.jpg", "name": "Таинственный Лось 🦌", "rarity": "⭐ обычная", "price": 10},
 
     {"file": "1.jpg", "name": "Дониёр 🌲", "rarity": "🔮 Секретная", "price": 100},
     {"file": "9.jpg", "name": "Страж Дубравы 🌲", "rarity": "⭐ Обычная", "price": 10},
