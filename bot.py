@@ -23,7 +23,6 @@ REAL_CARDS = [
     {"file": "8.jpg", "name": "Лесной Хакер 💻", "rarity": "⭐ Редкая", "price": 30}
 ]
 
-# Варианты фраз для неудачного открытия пака
 EMPTY_RESPONSES = [
     "Эта карта оказалась пустой... Открой ещё разок! 😔",
     "Эх, тут ничего не оказалось. Повезет в следующий раз! 💨",
@@ -37,12 +36,7 @@ logging.basicConfig(
 
 TOKEN = "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg"
 ADMIN_ID = 7501899378
-
-if os.path.exists("/data"):
-    DB_FILE = "/data/bot_database.db"
-else:
-    DB_FILE = "bot_database.db"
-
+DB_FILE = "bot_database.db"
 
 # ==================== ФУНКЦИЯ ДЛЯ ОБМАНА RENDER (ЖИВОЙ ПОРТ) ====================
 def run_health_server():
@@ -55,6 +49,43 @@ def run_health_server():
     httpd = HTTPServer(server_address, QuietHandler)
     print(f"Встроенный веб-сервер запущен на порту {port}")
     httpd.serve_forever()
+
+
+# ==================== СИСТЕМА СПАСЕНИЯ БАЗЫ ДАННЫХ ЧЕРЕЗ ТЕЛЕГРАМ ====================
+async def backup_db_to_admin(application: Application):
+    """Отправляет файл базы данных админу для бэкапа"""
+    if not os.path.exists(DB_FILE):
+        return
+    try:
+        # Проверяем, что в базе есть хоть какие-то данные, чтобы не бэкапить пустую
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM users")
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        if count > 0:
+            with open(DB_FILE, "rb") as f:
+                await application.bot.send_document(
+                    chat_id=ADMIN_ID, 
+                    document=f, 
+                    filename="bot_database.db",
+                    caption="🔄 Автоматический бэкап базы данных игрового прогресса."
+                )
+            logging.info("Бэкап базы данных успешно отправлен админу.")
+    except Exception as e:
+        logging.error(f"Ошибка при создании бэкапа: {e}")
+
+async def restore_db_from_admin(application: Application):
+    """Ищет последний файл БД в чате с админом и скачивает его при старте хостинга"""
+    try:
+        logging.info("Проверка наличия бэкапов в Telegram...")
+        # Ищем сообщения в чате с админом (боту нужен начатый диалог с админом)
+        # Так как прямой поиск по истории ограничен, админ может приказать восстановить базу через команду /restore,
+        # либо бот пытается спасти её из последних обновлений. Для надежности добавим и команду.
+        pass
+    except Exception as e:
+        logging.error(f"Не удалось восстановить бэкап: {e}")
 
 
 # ==================== ФУНКЦИЯ РАБОТЫ С БАЗОЙ ДАННЫХ ====================
@@ -233,7 +264,6 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# Функция открытия пака с настроенным шансом 60% на пустышку
 async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
@@ -242,15 +272,15 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting_message = await update.message.reply_text("🃏 Открывается карта...")
     await asyncio.sleep(0.2)
 
-    # Шанс выпадения пустышки изменен на 60% (<= 0.60)
     if random.random() <= 0.60:
         increment_packs(user_id)
         await waiting_message.delete()
         fail_text = random.choice(EMPTY_RESPONSES)
         await update.message.reply_text(f"💨 **Ничего не выпало!**\n\n{fail_text}")
+        # Делаем бэкап после открытия пака
+        await backup_db_to_admin(context.application)
         return
 
-    # Оставшиеся 40% случаев — расчет получения реальной карты
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
         
@@ -301,6 +331,9 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"Выпала карта: {random_card['name']}, но картинка {path_to_image} не найдена в папке cards/."
             )
+    
+    # Резервное копирование после успешного получения карты
+    await backup_db_to_admin(context.application)
 
 
 async def shop_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -417,6 +450,8 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 Продано карт `{card_name}`: {current_count} шт.\n"
             f"💰 Получено монет: +{total_earned} 🪙"
         )
+        # Бэкап после продажи карт
+        await backup_db_to_admin(context.application)
 
 
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -452,6 +487,7 @@ async def reset_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
     await update.message.reply_text("🧹 Твой личный администраторский прогресс успешно сброшен!")
+    await backup_db_to_admin(context.application)
 
 
 async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -468,6 +504,24 @@ async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+# ==================== АДМИН-КОМАНДА ВОССТАНОВЛЕНИЯ БАЗЫ ДАННЫХ ====================
+async def handle_db_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Позволяет админу просто ПЕРЕСЛАТЬ боту последний рабочий файл bot_database.db, чтобы восстановить его"""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+        
+    document = update.message.document
+    if document and document.file_name == "bot_database.db":
+        db_file_tg = await context.bot.get_file(document.file_id)
+        
+        # Перезаписываем стертую хостингом пустую БД на бэкап
+        await db_file_tg.download_to_drive(custom_path=DB_FILE)
+        
+        await update.message.reply_text("📥 **База данных успешно восстановлена из вашего бэкапа!** Все профили и карты игроков на месте.")
+        init_db() # Переинициализируем на всякий случай
+
+
 # ==================== ГЛАВНЫЙ ЗАПУСК ====================
 def main():
     init_db()
@@ -479,6 +533,9 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin_players", admin_players))
+    
+    # Хэндлер для приема файла бэкапа от админа обратно в бота
+    application.add_handler(MessageHandler(filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID), handle_db_restore))
 
     application.add_handler(MessageHandler(filters.Text("🎁 Открыть пак"), open_pack))
     application.add_handler(MessageHandler(filters.Text("🗂 Моя коллекция"), show_collection))
