@@ -3,13 +3,28 @@ import random
 import os
 import asyncio
 import sqlite3
-import threading  # Добавили для фонового веб-сервера
-from http.server import SimpleHTTPRequestHandler, HTTPServer # Добавили server
+import threading  # Для фонового веб-сервера
+from http.server import SimpleHTTPRequestHandler, HTTPServer # Для сервера
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Импортируем склад карт из соседнего файла cards.py
-from cards import CARDS
+# ==================== ТВОЙ ОБНОВЛЕННЫЙ СПИСОК КАРТ ====================
+REAL_CARDS = [
+    {"file": "2.jpg", "name": "金 sunny🌲 김지ха | DA 🐂", "rarity": "🔮 Секретная", "price": 100},
+    {"file": "5.jpg", "name": "Солнечный Самурай ☀️", "rarity": "⭐ Обычная", "price": 10},
+    {"file": "4.jpg", "name": "Меха-Бык 🐂", "rarity": "⭐ Редкая", "price": 30},
+
+    {"file": "1.jpg", "name": "👻losnya🐂🌲", "rarity": "🔮 Секретная", "price": 100},
+    {"file": "7.jpg", "name": "Призрак Леса 👻", "rarity": "⭐ Редкая", "price": 30},
+    {"file": "6.jpg", "name": "Таинственный Лось 🦌", "rarity": "⭐ Обычная", "price": 10},
+
+    {"file": "3.jpg", "name": "Дониёр 🌲", "rarity": "🔮 Секретная", "price": 100},
+    {"file": "9.jpg", "name": "Страж Дубравы 🌲", "rarity": "⭐ Обычная", "price": 10},
+    {"file": "8.jpg", "name": "Лесной Хакер 💻", "rarity": "⭐ Редкая", "price": 30}
+]
+
+# Карта-пустышка, которая выдается, если выролилась редкость, которой еще нет в списке REAL_CARDS
+EMPTY_CARD = {"file": None, "name": "Эта карта пуста, открой ещё 😔", "rarity": "⚪ Пустышка", "price": 0}
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
@@ -24,10 +39,9 @@ DB_FILE = "bot_database.db"
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     server_address = ("", port)
-    # Создаем простейший server, который на любые запросы отвечает 200 OK
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
-            pass # Чтобы не спамить в логи Render пустыми запросами
+            pass
     
     httpd = HTTPServer(server_address, QuietHandler)
     print(f"Встроенный веб-сервер запущен на порту {port}")
@@ -38,7 +52,6 @@ def run_health_server():
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS users
                    (
@@ -172,7 +185,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
 
-# Функция складывает дубликаты в x(цифра)
+# Отображение коллекции с группировкой дубликатов (xЦифра)
 async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_cards = get_user_cards(user_id)
@@ -181,7 +194,6 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
         return
 
-    # Группируем карты по их уникальному имени
     grouped_cards = {}
     for card in user_cards:
         name = card.get('name') or "Без названия"
@@ -201,7 +213,7 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# Настроенные шансы выпадения (1%, 4%, 10%, 25%, 60%)
+# Умное открытие паков под твою структуру карт и шансы
 async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
@@ -212,26 +224,31 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
-        # Настройка вероятностей
+        
+        # Определяем целевую редкость по твоим шансам
         if rarity_roll <= 1.0:
-            rarity = "🌌 Абсолютная"
+            target_rarity = "🌌 Абсолютная"
         elif rarity_roll <= 5.0:
-            rarity = "👑 Божественная"
+            target_rarity = "👑 Божественная"
         elif rarity_roll <= 15.0:
-            rarity = "🔮 Секретная"
+            target_rarity = "🔮 Секретная"
         elif rarity_roll <= 40.0:
-            rarity = "⭐ Редкая"
+            target_rarity = "⭐ Редкая"
         else:
-            rarity = "⭐ Обычная"
+            target_rarity = "⭐ Обычная"
 
+        # Ищем карты нужной редкости в REAL_CARDS (без учета регистра)
         cards_of_rarity = [
-            card for card in CARDS
-            if card["rarity"].lower() == rarity.lower()
+            card for card in REAL_CARDS
+            if card["rarity"].strip().lower() == target_rarity.strip().lower()
         ]
 
+        # Если карты такой редкости есть — даем случайную из них
         if cards_of_rarity:
             return random.choice(cards_of_rarity)
-        return random.choice(CARDS)
+        
+        # Если такой редкости в списке пока нет (например Абсолютной), выдаем карту-пустышку
+        return EMPTY_CARD
 
     random_card = get_random_card()
     path_to_image = random_card.get("file")
@@ -239,13 +256,15 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     increment_packs(user_id)
     await waiting_message.delete()
 
-    if random_card['price'] == 0 or "пуста" in random_card['name'].lower():
+    # Если выпала пустышка
+    if random_card['price'] == 0 or not path_to_image:
         await update.message.reply_text(
             f"🃏 **Тебе выпала карта!**\n\n"
-            f"😔 _Эта карта пуста, открой ещё..._"
+            f"😔 _{random_card['name']}_"
         )
         return
 
+    # Если выпала реальная карта — сохраняем в базу
     add_card_to_db(user_id, random_card)
 
     if str(path_to_image).startswith("AgAC"):
@@ -264,7 +283,7 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except FileNotFoundError:
             await update.message.reply_text(
-                f"Выпала карта: {random_card['name']}, но картинка {path_to_image} не найдена на сервере."
+                f"Выпала карта: {random_card['name']}, но картинка {path_to_image} не найдена в папке cards/."
             )
 
 
@@ -384,11 +403,9 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ: Теперь отображает игроков даже с 0 монет
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Убрали условие WHERE coins > 0, чтобы топ не обнулялся полностью
     cursor.execute('SELECT first_name, coins FROM users ORDER BY coins DESC LIMIT 10')
     leaders = cursor.fetchall()
     conn.close()
@@ -434,7 +451,6 @@ async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_db()
 
-    # Запускаем веб-сервер для Render в отдельном потоке ДО старта бота
     srv_thread = threading.Thread(target=run_health_server, daemon=True)
     srv_thread.start()
 
