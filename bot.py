@@ -6,7 +6,7 @@ import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Импортируем склад карт из соседнего файла cards.py
+# Импортируем склад карт из соседнего файла cards.py (запятую в конце убрали)
 from cards import CARDS
 
 logging.basicConfig(
@@ -27,20 +27,10 @@ def init_db():
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS users
                    (
-                       user_id
-                       INTEGER
-                       PRIMARY
-                       KEY,
-                       first_name
-                       TEXT,
-                       coins
-                       INTEGER
-                       DEFAULT
-                       0,
-                       packs_opened
-                       INTEGER
-                       DEFAULT
-                       0
+                       user_id INTEGER PRIMARY KEY,
+                       first_name TEXT,
+                       coins INTEGER DEFAULT 0,
+                       packs_opened INTEGER DEFAULT 0
                    )
                    ''')
 
@@ -54,21 +44,12 @@ def init_db():
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS collections
                    (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       user_id
-                       INTEGER,
-                       card_name
-                       TEXT,
-                       rarity
-                       TEXT,
-                       file_name
-                       TEXT,
-                       price
-                       INTEGER
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       user_id INTEGER,
+                       card_name TEXT,
+                       rarity TEXT,
+                       file_name TEXT,
+                       price INTEGER
                    )
                    ''')
     conn.commit()
@@ -180,6 +161,19 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
 
+async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_cards = get_user_cards(user_id)
+
+    if not user_cards:
+        await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
+        return
+
+    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:** [{card['rarity']}] — {card['price']} 🪙\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
@@ -188,13 +182,35 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting_message = await update.message.reply_text("🃏 Открывается карта...")
     await asyncio.sleep(0.2)
 
-    random_card = random.choice(CARDS)
+    # Функция генерации редкости
+    def get_random_card():
+        rarity_roll = random.uniform(0, 100)
+        if rarity_roll <= 0.1:
+            rarity = "👑 Абсолютная"
+        elif rarity_roll <= 1:
+            rarity = "✨ Божественная"
+        elif rarity_roll <= 10:
+            rarity = "🔮 Секретная"
+        elif rarity_roll <= 35:
+            rarity = "⭐ Редкая"
+        else:
+            rarity = "⭐ Обычная"
+
+        cards_of_rarity = [
+            card for card in CARDS
+            if card["rarity"].lower() == rarity.lower()
+        ]
+
+        if cards_of_rarity:
+            return random.choice(cards_of_rarity)
+        return random.choice(CARDS)
+
+    # ВЫЗЫВАЕМ функцию, чтобы получить карту
+    random_card = get_random_card()
     path_to_image = random_card.get("file")
 
-    # Сразу записываем пак в базу данных и увеличиваем счётчик открытий в профиле
-    add_card_to_db(user_id, random_card)
+    # Счётчик открытий в профиле увеличиваем в любом случае
     increment_packs(user_id)
-
     await waiting_message.delete()
 
     # ПРОВЕРКА НА ПУСТЫШКУ: Если цена 0 или в имени есть слово "пуста"
@@ -203,43 +219,28 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🃏 **Тебе выпала карта!**\n\n"
             f"😔 _Эта карта пуста, открой ещё..._"
         )
-        return
+        return  # Конец для пустышки. Она НЕ сохранится в БД!
 
-    # ЛОГИКА ДЛЯ ОБЫЧНЫХ КАРТ С КАРТИНКАМИ
-    caption_text = f"📛 Название: {random_card['name']}\n💎 Редкость: {random_card['rarity']}\n💰 Цена продажи: {random_card['price']} 🪙"
+    # === ЕСЛИ КОД ПОШЕЛ ДАЛЬШЕ — ЗНАЧИТ ЭТО ХОРОШАЯ КАРТА ===
+    add_card_to_db(user_id, random_card)
 
-    if path_to_image and os.path.exists(path_to_image):
-        with open(path_to_image, 'rb') as photo_file:
-            await update.message.reply_photo(photo=photo_file, caption=caption_text)
-    else:
-        await update.message.reply_text(
-            f"🃏 **Тебе выпала карта!**\n\n{caption_text}"
+    # Проверяем вид картинки
+    if str(path_to_image).startswith("AgAC"):
+        await update.message.reply_photo(
+            photo=path_to_image,
+            caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}"
         )
-
-
-async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_cards = get_user_cards(user_id)
-
-    if not user_cards:
-        await update.message.reply_text("Твоя коллекция пуста. Жми 🎁 Открыть пак!")
-        return
-
-    sorted_collection = {}
-    for card in user_cards:
-        rarity = card['rarity']
-        name = card['name']
-        if rarity not in sorted_collection:
-            sorted_collection[rarity] = {}
-        sorted_collection[rarity][name] = sorted_collection[rarity].get(name, 0) + 1
-
-    text = "🗂 **Твоя личная коллекция:**\n"
-    for rarity, cards_dict in sorted_collection.items():
-        text += f"\n🔹 **{rarity}**\n"
-        for name, count in cards_dict.items():
-            text += f"  • {name} — {count} шт.\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
+    else:
+        try:
+            with open(f"cards/{path_to_image}", "rb") as photo_file:
+                await update.message.reply_photo(
+                    photo=photo_file,
+                    caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}"
+                )
+        except FileNotFoundError:
+            await update.message.reply_text(
+                f"Выпала карта: {random_card['name']}, но картинка {path_to_image} не найдена на сервере."
+            )
 
 
 # ==================== ИНТЕРАКТИВНЫЙ МАГАЗИН ====================
@@ -341,14 +342,10 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
 
         cursor.execute('''
-                       DELETE
-                       FROM collections
-                       WHERE id IN (SELECT id
-                                    FROM collections
-                                    WHERE user_id = ?
-                                      AND card_name = ?
-                           LIMIT ?
-                           )
+                       DELETE FROM collections
+                       WHERE id IN (SELECT id FROM collections
+                                    WHERE user_id = ? AND card_name = ?
+                                    LIMIT ?)
                        ''', (user_id, card_name, current_count))
 
         cursor.execute('UPDATE users SET coins = coins + ? WHERE user_id = ?', (total_earned, user_id))
@@ -409,27 +406,4 @@ async def admin_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-# ==================== ГЛАВНЫЙ ЗАПУСК ====================
-def main():
-    init_db()
-
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin_players", admin_players))
-
-    application.add_handler(MessageHandler(filters.Text("🎁 Открыть пак"), open_pack))
-    application.add_handler(MessageHandler(filters.Text("🗂 Моя коллекция"), show_collection))
-    application.add_handler(MessageHandler(filters.Text("🏆 Топ игроков"), show_leaderboard))
-    application.add_handler(MessageHandler(filters.Text("🏪 Магазин-Обменник"), shop_exchange))
-    application.add_handler(MessageHandler(filters.Text("🧹 Сбросить прогресс"), reset_statistics))
-    application.add_handler(MessageHandler(filters.Text("👤 Профиль"), show_profile))
-
-    application.add_handler(CallbackQueryHandler(shop_callback, pattern="^shop_"))
-
-    print("Бот успешно запущен!")
-    application.run_polling(drop_pending_updates=True)
-
-
-if __name__ == '__main__':
-    main()
+#
