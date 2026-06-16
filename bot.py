@@ -53,6 +53,14 @@ TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97
 ADMIN_ID = 7501899378
 LOG_CHAT_ID = ADMIN_ID  
 
+# ==================== ГЛАВНАЯ КЛАВИАТУРА КНОПОК ====================
+def get_main_keyboard():
+    buttons = [
+        ["📦 Открыть пак", "🛍️ Магазин титулов"],
+        ["👤 Мой профиль"]
+    ]
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
 # ==================== ПОДКЛЮЧЕНИЕ К MONGODB ATLAS ====================
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://tananyandavid5_db_user:7dmj6rMlquxr19c8@david2010.wlbyl1j.mongodb.net/?retryWrites=true&w=majority&appName=David2010")
 client = MongoClient(MONGO_URI)
@@ -77,7 +85,6 @@ def run_health_server():
 
 # ==================== РАБОТА С БАЗОЙ ДАННЫХ MONGODB ====================
 def register_user(user_id, first_name):
-    # При первой регистрации выдаем 500 стартовых монет, чтобы было на что покупать титулы
     users_col.update_one(
         {"user_id": user_id},
         {
@@ -97,11 +104,9 @@ def increment_packs(user_id):
     users_col.update_one({"user_id": user_id}, {"$inc": {"packs_opened": 1}})
 
 def update_user_coins(user_id, amount):
-    # Изменяет баланс (amount может быть как положительным, так и отрицательным)
     users_col.update_one({"user_id": user_id}, {"$inc": {"coins": amount}})
 
 def set_user_title(user_id, title_name):
-    # Записывает новый титул пользователю
     users_col.update_one({"user_id": user_id}, {"$set": {"active_title": title_name}})
 
 def add_card_to_db(user_id, card):
@@ -141,10 +146,9 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if dropped_card["file"] is None:
         response_text = random.choice(EMPTY_RESPONSES)
-        await update.message.reply_text(response_text)
+        await update.message.reply_text(response_text, reply_markup=get_main_keyboard())
     else:
         add_card_to_db(user_id, dropped_card)
-        # При нахождении карты начисляем игроку её стоимость в монетах
         update_user_coins(user_id, dropped_card['price'])
         
         path_to_image = f"cards/{dropped_card['file']}"
@@ -159,12 +163,14 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_photo(
                 photo=open(path_to_image, 'rb'), 
                 caption=caption_text, 
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
             )
         else:
             await update.message.reply_text(
                 f"Картинка не найдена, но карта добавлена!\n\n{caption_text}", 
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
             )
 
 
@@ -182,7 +188,6 @@ async def open_shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Выберите титул для покупки:"
     )
     
-    # Создаем инлайн-кнопки для каждого титула из ассортимента
     keyboard = []
     for key, info in SHOP_TITLES.items():
         keyboard.append([InlineKeyboardButton(f"{info['name']} — {info['price']} 🪙", callback_data=f"buy_{key}")])
@@ -193,7 +198,7 @@ async def open_shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # Убираем часики загрузки на кнопке
+    await query.answer()
     
     user_id = query.from_user.id
     data = query.data
@@ -205,39 +210,40 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             title_info = SHOP_TITLES[title_key]
             coins, _, active_title = get_user_stats(user_id)
             
+            # Если у пользователя уже есть этот титул
             if active_title == title_info['name']:
-                await query.edit_message_text(f"🛑 У вас уже активен титул *{title_info['name']}*!", parse_mode="Markdown")
+                await query.message.reply_text(
+                    f"🛑 У вас уже активен титул *{title_info['name']}*!", 
+                    parse_mode="Markdown",
+                    reply_markup=get_main_keyboard()
+                )
                 return
                 
+            # Если не хватает денег
             if coins < title_info['price']:
-                await query.edit_message_text(
+                await query.message.reply_text(
                     f"❌ Недостаточно монет! {title_info['name']} стоит *{title_info['price']}* 🪙, а у вас только *{coins}* 🪙.", 
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    reply_markup=get_main_keyboard()
                 )
             else:
-                # Списываем монеты (передаем отрицательное число)
+                # Покупка успешна
                 update_user_coins(user_id, -title_info['price'])
-                # Устанавливаем титул
                 set_user_title(user_id, title_info['name'])
                 
-                await query.edit_message_text(
+                await query.message.reply_text(
                     f"🎉 Успешная покупка!\nУстановлен новый статус: *{title_info['name']}*\n"
                     f"Списано: -{title_info['price']} 🪙", 
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    reply_markup=get_main_keyboard()
                 )
+
 
 # ==================== КОМАНДА /START И ПРОФИЛЬ ====================
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id, update.effective_user.first_name)
-    
-    # Обычная клавиатура с кнопками управления
-    buttons = [
-        ["📦 Открыть пак", "🛍️ Магазин титулов"],
-        ["👤 Мой профиль"]
-    ]
-    reply_markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-    await update.message.reply_text("Добро пожаловать в DAcards! Пользуйтесь меню ниже для игры:", reply_markup=reply_markup)
+    await update.message.reply_text("Добро пожаловать в DAcards! Пользуйтесь меню ниже для игры:", reply_markup=get_main_keyboard())
 
 
 async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,23 +267,20 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 Открыто паков: {packs}\n\n"
         f"🗂️ *Ваша коллекция карт:*\n{cards_text}"
     )
-    await update.message.reply_text(profile_text, parse_mode="Markdown")
+    await update.message.reply_text(profile_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 # ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
 def main():
-    # Запуск фонового веб-сервера для Render
     threading.Thread(target=run_health_server, daemon=True).start()
 
     application = Application.builder().token(TOKEN).build()
 
-    # Регистрация обработчиков команд и сообщений текста
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(MessageHandler(filters.Text("📦 Открыть пак"), open_pack_handler))
     application.add_handler(MessageHandler(filters.Text("🛍️ Магазин титулов"), open_shop_handler))
     application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
     
-    # Важнейший обработчик нажатия инлайн-кнопок магазина!
     application.add_handler(CallbackQueryHandler(shop_callback_handler))
 
     print("Бот успешно запущен и слушает обновления...")
