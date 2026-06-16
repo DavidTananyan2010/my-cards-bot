@@ -2,7 +2,7 @@ import logging
 import random
 import os
 import asyncio
-import time  # Добавлено для отслеживания времени кулдауна
+import time  # Для отслеживания времени кулдауна
 import threading  # Для фонового веб-сервера
 from http.server import SimpleHTTPRequestHandler, HTTPServer # Для сервера
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -52,16 +52,15 @@ logging.basicConfig(
 TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg")
 ADMIN_ID = 7501899378
 
-# Словарь для хранения кулдаунов в оперативной памяти: {user_id: timestamp_последнего_открытия}
 COOLDOWNS = {}
-COOLDOWN_TIME = 1.5  # Время задержки в секунда
+COOLDOWN_TIME = 1.5 
 
-# ==================== ГЛАВНАЯ КЛАВИАТУРА КНОПОК ====================
+# ==================== ОБНОВЛЕННАЯ СТИЛЬНАЯ КЛАВИАТУРА КНОПОК ====================
 def get_main_keyboard():
     buttons = [
-        ["📦 Открыть пак", "🛍️ Магазин"],
-        ["🗂️ Моя коллекция", "🏆 ТОП игроков"],
-        ["👤 Мой профиль"]
+        ["📦 Открыть пак", "👤 Мой профиль"],      # Ряд 1
+        ["🗂️ Моя коллекция", "🏆 ТОП игроков"],    # Ряд 2
+        ["🛍️ Магазин", "⚠️ Сброс прогресса"]       # Ряд 3
     ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
@@ -127,13 +126,12 @@ def get_user_cards(user_id):
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id, update.effective_user.first_name)
-    await update.message.reply_text("Добро пожаловать в DAcards! Выберите действие:", reply_markup=get_main_keyboard())
+    await update.message.reply_text("Добро пожаловать в DAcards! Выберите действие в меню ниже:", reply_markup=get_main_keyboard())
 
 async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id, update.effective_user.first_name)
     
-    # --- ПРОВЕРКА КУЛДАУНА (1.5 СЕКУНДЫ) ---
     current_time = time.time()
     if user_id in COOLDOWNS:
         time_passed = current_time - COOLDOWNS[user_id]
@@ -146,7 +144,6 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
             
-    # Обновляем время последнего успешного открытия
     COOLDOWNS[user_id] = current_time
     
     dropped_card = random.choice(CARDS)
@@ -205,6 +202,22 @@ async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+# ==================== ИНТЕРАКТИВНЫЙ СБРОС ПРОГРЕССА (БЕЗОПАСНОСТЬ) ====================
+async def request_reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    register_user(user_id, update.effective_user.first_name)
+    
+    kb = [
+        [InlineKeyboardButton("✅ Да, сбросить всё", callback_data="confirm_full_reset"),
+         InlineKeyboardButton("❌ Отмена", callback_data="cancel_reset")]
+    ]
+    await update.message.reply_text(
+        "⚠️ *ВНИМАНИЕ! ПОЛНОЕ ОБНУЛЕНИЕ ПРОФИЛЯ!*\n\n"
+        "Вы действительно хотите навсегда стереть ваш прогресс, обнулить баланс монет и полностью очистить коллекцию карт? Это действие нельзя отменить!",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )
+
 # ==================== СТРУКТУРИРОВАННЫЙ МАГАЗИН ====================
 async def open_shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -223,8 +236,25 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     data = query.data
     
-    # --- НАВИГАЦИЯ МЕНЮ ---
-    if data == "menu_titles":
+    # --- БЕЗОПАСНЫЙ СБРОС ДАННЫХ ---
+    if data == "confirm_full_reset":
+        # Полное обнуление параметров в MongoDB
+        users_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}}
+        )
+        # Полное удаление карт пользователя
+        collections_col.delete_many({"user_id": user_id})
+        
+        await query.edit_message_text("♻️ *Ваш прогресс успешно аннулирован!*\nБаланс сброшен до 500 монет, коллекция полностью очищена.", parse_mode="Markdown")
+        return
+        
+    elif data == "cancel_reset":
+        await query.edit_message_text("❌ *Сброс отменен.* Ваши карты и монеты остались в полной сохранности!", parse_mode="Markdown")
+        return
+
+    # --- НАВИГАЦИЯ МЕНЮ МАГАЗИНА ---
+    elif data == "menu_titles":
         kb = [
             [InlineKeyboardButton("🛍️ Купить титул", callback_data="buy_title_list")],
             [InlineKeyboardButton("👗 Гардеробная / Надеть титул", callback_data="wardrobe_list")],
@@ -372,6 +402,7 @@ def main():
     application.add_handler(MessageHandler(filters.Text("🗂️ Моя коллекция"), collection_handler))
     application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
     application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
+    application.add_handler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler) # Новая кнопка
     
     application.add_handler(CommandHandler("givecoins", admin_give_coins))
     application.add_handler(CommandHandler("givetitle", admin_give_title))
