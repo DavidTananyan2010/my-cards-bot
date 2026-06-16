@@ -215,7 +215,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_name = update.effective_user.first_name
     register_user(user_id, first_name)
 
-    # Обновленная, супер-комплектная клавиатура
     keyboard = [
         ['✨ Открыть пак ✨'],
         ['🗂 Моя Коллекция', '🪙 Сдать дубликаты'],
@@ -318,36 +317,3 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif rarity_roll <= 7.0:
             target_rarity = "👑 Божественная"
         elif rarity_roll <= 20.0:
-            target_rarity = "🔮 Секретная"
-        elif rarity_roll <= 55.0:
-            target_rarity = "⭐ Редкая"
-        else:
-            target_rarity = "⭐ Обычная"
-
-        cards_of_rarity = [
-            card for card in REAL_CARDS
-            if card["rarity"].strip().lower() == target_rarity.strip().lower()
-        ]
-        if cards_of_rarity:
-            return random.choice(cards_of_rarity)
-        return random.choice(REAL_CARDS)
-
-    random_card = get_random_card()
-    path_to_image = random_card.get("file")
-
-    increment_packs(user_id)
-    await waiting_message.delete()
-
-    add_card_to_db(user_id, random_card)
-
-    caption_text = (
-        "✨ **УСПЕШНОЕ ОТКРЫТИЕ ПАКА!** ✨\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🃏 **Название:** {random_card['name']}\n"
-        f"💎 **Редкость:** {random_card['rarity']}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Карта добавлена в вашу личную коллекцию!"
-    )
-
-    if str(path_to_image).startswith("AgAC"):
-        await update.message.reply_photo(photo=path_to_image, caption=caption_text, parse_mode="Markdown
