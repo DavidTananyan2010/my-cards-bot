@@ -15,7 +15,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
-TOKEN = "8701989939:AAGZCFow7KKp9-0WdcEP-af826hVehG2Ck4"
+TOKEN = "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg"
 ADMIN_ID = 7501899378
 DB_FILE = "bot_database.db"
 
