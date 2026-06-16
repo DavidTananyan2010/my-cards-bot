@@ -691,3 +691,27 @@ async def admin_list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f"Всего пользователей: {len(users)}"
     
     await update.message.reply_text(text, parse_mode="Markdown")
+
+elif data.startswith("buytitle_"):
+    title_id = data.split("_")[1]
+    if title_id in SHOP_TITLES:
+        info = SHOP_TITLES[title_id]
+        success = buy_title_db(user_id, title_id, info['name'], info['price'])
+        if success:
+            await query.message.edit_text(
+                f"🎉 **ПОЗДРАВЛЯЕМ С ПОКУПКОЙ!**\n\n"
+                f"Вы успешно приобрели элитный титул **{info['name']}**.\n"
+                f"Перейдите в раздел управления, чтобы закрепить его.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💼 Открыть гардероб", callback_data="titlemenu_my")]
+                ])
+            )
+        else:
+            await query.message.edit_text(
+                f"❌ **НЕДОСТАТОЧНО СРЕДСТВ**\n\n"
+                f"Вам не хватает монет для заключения этой сделки.\n"
+                f"Стоимость титула: {info['price']} 🪙",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Вернуться к витрине", callback_data="titlemenu_buy")]
+                ])
+            )
