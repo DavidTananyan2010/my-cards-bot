@@ -2,6 +2,7 @@ import logging
 import random
 import os
 import asyncio
+import time  # Добавлено для отслеживания времени кулдауна
 import threading  # Для фонового веб-сервера
 from http.server import SimpleHTTPRequestHandler, HTTPServer # Для сервера
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -50,6 +51,10 @@ logging.basicConfig(
 
 TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg")
 ADMIN_ID = 7501899378
+
+# Словарь для хранения кулдаунов в оперативной памяти: {user_id: timestamp_последнего_открытия}
+COOLDOWNS = {}
+COOLDOWN_TIME = 1.5  # Время задержки в секунда
 
 # ==================== ГЛАВНАЯ КЛАВИАТУРА КНОПОК ====================
 def get_main_keyboard():
@@ -128,6 +133,22 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id, update.effective_user.first_name)
     
+    # --- ПРОВЕРКА КУЛДАУНА (1.5 СЕКУНДЫ) ---
+    current_time = time.time()
+    if user_id in COOLDOWNS:
+        time_passed = current_time - COOLDOWNS[user_id]
+        if time_passed < COOLDOWN_TIME:
+            time_left = COOLDOWN_TIME - time_passed
+            await update.message.reply_text(
+                f"⏳ *Подождите еще {time_left:.1f} сек.* перед следующим открытием пака!", 
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
+            )
+            return
+            
+    # Обновляем время последнего успешного открытия
+    COOLDOWNS[user_id] = current_time
+    
     dropped_card = random.choice(CARDS)
     increment_packs(user_id)
 
@@ -180,7 +201,6 @@ async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     for name, count in card_counts.items():
         text += f"• *{name}* — количество: `x{count}`\n"
-        # Инлайн-кнопка удаления конкретной карты на выбор
         keyboard.append([InlineKeyboardButton(f"❌ Удалить 1 шт: {name}", callback_data=f"delete_card_{name}")])
         
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -241,4 +261,123 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "sell_all_cards":
         cards = get_user_cards(user_id)
         if not cards:
-            await query.message.reply_text("🛑 У вас нет карт для
+            await query.message.reply_text("🛑 У вас нет карт для продажи.", reply_markup=get_main_keyboard())
+            return
+        income = sum(c.get("price", 0) for c in cards)
+        update_user_coins(user_id, income)
+        collections_col.delete_many({"user_id": user_id})
+        await query.edit_message_text(f"💵 Сделка совершена! Вы продали все свои карты ({len(cards)} шт.) и получили +*{income}* 🪙", parse_mode="Markdown")
+
+    # --- ЛОГИКА КАРТ: ПРОДАТЬ ДУБЛИКАТЫ ---
+    elif data == "sell_duplicates":
+        cards = get_user_cards(user_id)
+        if not cards:
+            await query.message.reply_text("🛑 Ваш инвентарь пуст.", reply_markup=get_main_keyboard())
+            return
+        
+        seen = set()
+        duplicates_ids = []
+        income = 0
+        
+        for c in cards:
+            name = c["card_name"]
+            if name in seen:
+                duplicates_ids.append(c["_id"])
+                income += c.get("price", 0)
+            else:
+                seen.add(name)
+                
+        if not duplicates_ids:
+            await query.edit_message_text("♻️ У вас нет повторяющихся карт. Все карты в коллекции уникальны! ✨")
+            return
+            
+        collections_col.delete_many({"_id": {"$in": duplicates_ids}})
+        update_user_coins(user_id, income)
+        await query.edit_message_text(f"♻️ Дубликаты успешно проданы! Очищено карт: *{len(duplicates_ids)} шт.* Выручка: +*{income}* 🪙. По одному экземпляру каждой карты сохранено!", parse_mode="Markdown")
+
+    # --- ТИТУЛЫ: СПИСОК ПОКУПКИ ---
+    elif data == "buy_title_list":
+        coins, _, active_title, owned_titles = get_user_stats(user_id)
+        text = f"🛍️ *Витрина титулов*\nВаш баланс: {coins} 🪙\n\nВыберите титул:"
+        kb = []
+        for key, info in SHOP_TITLES.items():
+            if info['name'] in owned_titles:
+                status = " (Куплен)"
+            else:
+                status = f" — {info['price']} 🪙"
+            kb.append([InlineKeyboardButton(f"{info['name']}{status}", callback_data=f"proc_buy_{key}")])
+        kb.append([InlineKeyboardButton("⬅️ Назад", callback_data="menu_titles")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data.startswith("proc_buy_"):
+        title_key = data.replace("proc_buy_", "")
+        if title_key in SHOP_TITLES:
+            info = SHOP_TITLES[title_key]
+            coins, _, _, owned_titles = get_user_stats(user_id)
+            
+            if info['name'] in owned_titles:
+                await query.message.reply_text("🛑 Этот титул уже приобретен. Наденьте его через Гардеробную!", reply_markup=get_main_keyboard())
+                return
+            if coins < info['price']:
+                await query.message.reply_text("❌ Недостаточно монет для покупки данного статуса.", reply_markup=get_main_keyboard())
+            else:
+                update_user_coins(user_id, -info['price'])
+                add_title_to_owned(user_id, info['name'])
+                set_user_title(user_id, info['name'])
+                await query.edit_message_text(f"🎉 Роскошное приобретение! Вы разблокировали и надели титул *{info['name']}*.", parse_mode="Markdown")
+
+    # --- ТИТУЛЫ: ГАРДЕРОБНАЯ / НАДЕТЬ ---
+    elif data == "wardrobe_list":
+        _, _, active_title, owned_titles = get_user_stats(user_id)
+        text = f"👗 *Ваша персональная гардеробная*\nТекущий активный титул: *{active_title}*\n\nНажмите на титул, чтобы активировать его:"
+        kb = []
+        for t_name in owned_titles:
+            tag = " ✅" if t_name == active_title else ""
+            kb.append([InlineKeyboardButton(f"{t_name}{tag}", callback_data=f"wear_{t_name}")])
+        kb.append([InlineKeyboardButton("⬅️ Назад", callback_data="menu_titles")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data.startswith("wear_"):
+        title_to_wear = data.replace("wear_", "")
+        set_user_title(user_id, title_to_wear)
+        await query.edit_message_text(f"👑 Изменение стиля! Вы успешно надели титул: *{title_to_wear}*", parse_mode="Markdown")
+
+# ==================== АДМИН-КОМАНДЫ ====================
+async def admin_give_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        target_id, amount = int(context.args[0]), int(context.args[1])
+        update_user_coins(target_id, amount)
+        await update.message.reply_text(f"✅ Баланс игрока `{target_id}` изменен на {amount} 🪙.")
+    except: pass
+
+async def admin_give_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        target_id = int(context.args[0])
+        title_name = " ".join(context.args[1:])
+        add_title_to_owned(target_id, title_name)
+        set_user_title(target_id, title_name)
+        await update.message.reply_text(f"✅ Игроку `{target_id}` выдан титул: {title_name}")
+    except: pass
+
+# ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start_handler))
+    application.add_handler(MessageHandler(filters.Text("📦 Открыть пак"), open_pack_handler))
+    application.add_handler(MessageHandler(filters.Text("🛍️ Магазин"), open_shop_main))
+    application.add_handler(MessageHandler(filters.Text("🗂️ Моя коллекция"), collection_handler))
+    application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
+    application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
+    
+    application.add_handler(CommandHandler("givecoins", admin_give_coins))
+    application.add_handler(CommandHandler("givetitle", admin_give_title))
+    application.add_handler(CallbackQueryHandler(shop_callback_handler))
+
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
