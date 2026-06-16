@@ -76,7 +76,6 @@ def init_db():
                    )
                    ''')
     
-    # Проверка и добавление новых колонок, если база уже существовала
     try:
         cursor.execute('ALTER TABLE users ADD COLUMN packs_opened INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
@@ -98,7 +97,6 @@ def init_db():
                    )
                    ''')
     
-    # Таблица для хранения купленных титулов пользователей
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS titles
                    (
@@ -176,7 +174,7 @@ def get_rank(packs_count):
     else:
         return "🌌 Абсолютное Божество DAcards"
 
-# Функции для работы с титулами в БД
+
 def get_owned_titles(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -184,6 +182,7 @@ def get_owned_titles(user_id):
     rows = cursor.fetchall()
     conn.close()
     return {r[0]: r[1] for r in rows}
+
 
 def buy_title_db(user_id, title_id, title_name, price):
     conn = sqlite3.connect(DB_FILE)
@@ -200,6 +199,7 @@ def buy_title_db(user_id, title_id, title_name, price):
     finally:
         conn.close()
 
+
 def set_active_title(user_id, title_name):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -215,18 +215,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_name = update.effective_user.first_name
     register_user(user_id, first_name)
 
+    # Роскошная, компактная и логичная раскладка кнопок
     keyboard = [
-        ['🎁 Открыть пак', '🏪 Магазин-Обменник'],
-        ['🗂 Моя коллекция', '🏆 Топ игроков'],
-        ['👤 Профиль', '🏅 Магазин титулов'],
-        ['🧹 Сбросить прогресс']
+        ['✨ Открыть пак ✨'],
+        ['🗂 Моя Коллекция', '🏪 Обменник'],
+        ['👤 Профиль', '🏅 Префиксы'],
+        ['🏆 Топ Игроков', '🧹 Сброс']
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, input_field_placeholder="Выберите действие...")
 
-    await update.message.reply_text(
-        f"Привет, {first_name}! Рад видеть тебя в игре. Выбирай действие на кнопках ниже 👇",
-        reply_markup=reply_markup
+    welcome_text = (
+        "👑 **Добро пожаловать в мир DAcards!**\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Рад приветствовать тебя, {first_name}! Испытай свою фортуну, "
+        "собирай ценные карты, соревнуйся в топе и открывай легендарные префиксы.\n\n"
+        "Выбери нужный раздел на панели управления ниже 👇"
     )
+
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,14 +244,15 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rank = get_rank(packs_opened)
 
     profile_text = (
-        "━━━━━━━━━━━━━━\n"
-        "👤 **ПРОФИЛЬ**\n\n"
-        f"🏅 **Префикс-Титул:** {active_title}\n"
-        f"🗂 **Карт в наличии:** {total_cards}\n"
-        f"💰 **Монет:** {coins}\n"
-        f"🏆 **Ранг паков:** {rank}\n\n"
-        f"📦 **Паков открыто всего:** {packs_opened}\n"
-        "━━━━━━━━━━━━━━"
+        "💎 **ЛИЧНЫЙ ПРОФИЛЬ ИГРОКА**\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚜️ **Статус-Титул:** {active_title}\n"
+        f"🏆 **Ранг коллекции:** {rank}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 **Баланс монет:** {coins} 🪙\n"
+        f"🗂 **Карт в наличии:** {total_cards} шт.\n"
+        f"📦 **Открыто паков:** {packs_opened} шт.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━"
     )
     await update.message.reply_text(profile_text, parse_mode="Markdown")
 
@@ -255,7 +262,7 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_cards = get_user_cards(user_id)
 
     if not user_cards:
-        await update.message.reply_text("🗂 Твоя коллекция пока пуста. Открой пак! 🎁")
+        await update.message.reply_text("🗂 **Твоя коллекция пока пуста.** Открой свой первый пак прямо сейчас! 🎁")
         return
 
     grouped_cards = {}
@@ -281,10 +288,11 @@ async def show_collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         grouped_cards[name]["count"] += 1
 
-    text = "🗂 **ТВОЯ КОЛЛЕКЦИЯ КАРТ:**\n\n"
+    text = "🗂 **ВАША СЛЕДСТВЕННАЯ КОЛЛЕКЦИЯ:**\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for idx, (name, info) in enumerate(grouped_cards.items(), 1):
         count_str = f" *(x{info['count']})*" if info['count'] > 1 else ""
-        text += f"{idx}. **{name}** [{info['rarity']}] — {info['price']} 🪙{count_str}\n"
+        text += f"{idx}. **{name}**\n   └ 🏷️ {info['rarity']} | Стоимость: {info['price']} 🪙{count_str}\n\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -294,31 +302,29 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_name = update.effective_user.first_name
     register_user(user_id, first_name)
 
-    waiting_message = await update.message.reply_text("🃏 Открывается карта...")
-    await asyncio.sleep(0.2)
+    waiting_message = await update.message.reply_text("🪄 *Энергия рандома концентрируется...* \n🃏 Карта открывается...", parse_mode="Markdown")
+    await asyncio.sleep(0.3)
 
-    # 1. ШАНС ПУСТЫШЕК: Изменен ровно на 50%
     if random.random() <= 0.50:
         increment_packs(user_id)
         await waiting_message.delete()
         fail_text = random.choice(EMPTY_RESPONSES)
-        await update.message.reply_text(f"💨 **Ничего не выпало!**\n\n{fail_text}")
+        await update.message.reply_text(f"💨 **Пусто!**\n\n{fail_text}")
         return
 
-    # 2. ШАНС КАРТ (Оставшиеся 50% делятся по редкостям)
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
         
         if rarity_roll <= 1.0:
-            target_rarity = "🌌 Абсолютная"   # 1% от карт
+            target_rarity = "🌌 Абсолютная"
         elif rarity_roll <= 7.0:
-            target_rarity = "👑 Божественная"  # 6% от карт
+            target_rarity = "👑 Божественная"
         elif rarity_roll <= 20.0:
-            target_rarity = "🔮 Секретная"     # 13% от карт
+            target_rarity = "🔮 Секретная"
         elif rarity_roll <= 55.0:
-            target_rarity = "⭐ Редкая"        # 35% от карт
+            target_rarity = "⭐ Редкая"
         else:
-            target_rarity = "⭐ Обычная"       # 45% от карт
+            target_rarity = "⭐ Обычная"
 
         cards_of_rarity = [
             card for card in REAL_CARDS
@@ -333,276 +339,4 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     random_card = get_random_card()
     path_to_image = random_card.get("file")
 
-    increment_packs(user_id)
-    await waiting_message.delete()
-
-    add_card_to_db(user_id, random_card)
-
-    if str(path_to_image).startswith("AgAC"):
-        await update.message.reply_photo(
-            photo=path_to_image,
-            caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}",
-            parse_mode="Markdown"
-        )
-    else:
-        try:
-            with open(f"cards/{path_to_image}", "rb") as photo_file:
-                await update.message.reply_photo(
-                    photo=photo_file,
-                    caption=f"🃏 **Выпала карта:** {random_card['name']}\n💎 **Редкость:** {random_card['rarity']}",
-                    parse_mode="Markdown"
-                )
-        except FileNotFoundError:
-            await update.message.reply_text(
-                f"Выпала карта: {random_card['name']}, но картинка {path_to_image} не найдена в папке cards/."
-            )
-
-
-async def shop_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_cards = get_user_cards(user_id)
-
-    if not user_cards:
-        await update.message.reply_text("🏪 В обменнике пусто. У тебя пока нет карт для продажи!")
-        return
-
-    card_counts = {}
-    card_prices = {}
-    for card in user_cards:
-        name = card['name'] or "Неизвестная карта 🃏"
-        card_counts[name] = card_counts.get(name, 0) + 1
-        card_prices[name] = card['price']
-
-    duplicates = {name: count for name, count in card_counts.items() if count > 1}
-
-    if not duplicates:
-        await update.message.reply_text(
-            "🏪 **Магазин-Обменник:**\n\nУ тебя нет дубликатов! Карты в единственном экземпляре продать нельзя.")
-        return
-
-    first_card = list(duplicates.keys())[0]
-    max_count = duplicates[first_card] - 1
-
-    context.user_data['shop_card'] = first_card
-    context.user_data['shop_count'] = 1
-    context.user_data['shop_max'] = max_count
-    context.user_data['shop_price'] = card_prices[first_card]
-
-    await send_shop_message(update.message, first_card, 1, max_count, card_prices[first_card])
-
-
-async def send_shop_message(message, card_name, current_count, max_count, price, is_edit=False):
-    total_earned = current_count * price
-    text = (
-        f"🏪 **Магазин-Обменник дубликатов**\n\n"
-        f"🃏 Карта: `{card_name}`\n"
-        f"💰 Цена за шт: {price} 🪙\n\n"
-        f"Выбрано для продажи: **{current_count}** из {max_count} шт.\n"
-        f"💵 Итого вы получите: **{total_earned}** монет 🪙"
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton("➖ 1", callback_data="shop_minus"),
-            InlineKeyboardButton(f"Выбрано: {current_count} шт.", callback_data="none"),
-            InlineKeyboardButton("➕ 1", callback_data="shop_plus")
-        ],
-        [
-            InlineKeyboardButton("✅ Подтвердить продажу", callback_data="shop_confirm"),
-            InlineKeyboardButton("❌ Отмена", callback_data="shop_cancel")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if is_edit:
-        await message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-
-async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    action = query.data
-    card_name = context.user_data.get('shop_card')
-    current_count = context.user_data.get('shop_count', 1)
-    max_count = context.user_data.get('shop_max', 1)
-    price = context.user_data.get('shop_price', 0)
-
-    if not card_name:
-        await query.message.edit_text("Сессия продажи завершена или устарела.")
-        return
-
-    if action == "shop_plus":
-        if current_count < max_count:
-            context.user_data['shop_count'] = current_count + 1
-            await send_shop_message(query.message, card_name, current_count + 1, max_count, price, is_edit=True)
-
-    elif action == "shop_minus":
-        if current_count > 1:
-            context.user_data['shop_count'] = current_count - 1
-            await send_shop_message(query.message, card_name, current_count - 1, max_count, price, is_edit=True)
-
-    elif action == "shop_cancel":
-        context.user_data.clear()
-        await query.message.edit_text("❌ Продажа отменена.")
-
-    elif action == "shop_confirm":
-        user_id = query.from_user.id
-        total_earned = current_count * price
-
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-
-        cursor.execute('''
-                       DELETE FROM collections
-                       WHERE id IN (SELECT id FROM collections
-                                    WHERE user_id = ? AND card_name = ?
-                                    LIMIT ?)
-                       ''', (user_id, card_name, current_count))
-
-        cursor.execute('UPDATE users SET coins = coins + ? WHERE user_id = ?', (total_earned, user_id))
-        conn.commit()
-        conn.close()
-
-        context.user_data.clear()
-        await query.message.edit_text(
-            f"✅ **Успешная продажа!**\n\n"
-            f"📦 Продано карт `{card_name}`: {current_count} шт.\n"
-            f"💰 Получено монет: +{total_earned} 🪙"
-        )
-
-
-# ==================== ЛОГИКА ТИТУЛОВ (НОВОЕ) ====================
-
-async def titles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🏅 **РЫНОК И УПРАВЛЕНИЕ ТИТУЛАМИ**\n\n"
-        "Здесь ты можешь приобрести уникальные лимитированные префиксы за монеты или настроить уже имеющиеся!"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🛒 Купить титул", callback_data="titlemenu_buy")],
-        [InlineKeyboardButton("💼 Мои титулы / Надеть", callback_data="titlemenu_my")]
-    ]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-
-async def titles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-
-    # Главное подменю: Магазин
-    if data == "titlemenu_buy":
-        owned = get_owned_titles(user_id)
-        keyboard = []
-        text = "🛒 **МАГАЗИН ЛИМИТИРОВАННЫХ ТИТУЛОВ**\n\n"
-        
-        for tid, info in SHOP_TITLES.items():
-            status = " (Куплено) ✅" if tid in owned else f" — {info['price']} 🪙"
-            text += f"• **{info['name']}**{status}\n_{info['desc']}_\n\n"
-            
-            if tid not in owned:
-                keyboard.append([InlineKeyboardButton(f"Купить {info['name']}", callback_data=f"buytitle_{tid}")])
-        
-        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_back")])
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    # Главное подменю: Инвентарь титулов
-    elif data == "titlemenu_my":
-        owned = get_owned_titles(user_id)
-        coins, packs, active_title = get_user_stats(user_id)
-        
-        text = f"💼 **ТВОЯ СУМКА С ТИТУЛАМИ**\n\nТекущий префикс: `{active_title}`\n\n"
-        keyboard = []
-        
-        if not owned:
-            text += "У тебя пока нет покупных титулов. Купи что-нибудь в магазине!"
-        else:
-            text += "Выбери титул ниже, чтобы закрепить его в профиле:"
-            for tid, tname in owned.items():
-                # Помечаем галочкой тот, который надет в данный момент
-                display_name = f"🟢 {tname}" if tname == active_title else tname
-                keyboard.append([InlineKeyboardButton(display_name, callback_data=f"equiptitle_{tid}")])
-        
-        # Кнопка снятия титула (возврат к дефолту)
-        if active_title != "Нет титула":
-            keyboard.append([InlineKeyboardButton("❌ Снять текущий титул", callback_data="equiptitle_none")])
-            
-        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_back")])
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    # Возврат в главное меню титулов
-    elif data == "titlemenu_back":
-        text = (
-            "🏅 **РЫНОК И УПРАВЛЕНИЕ ТИТУЛАМИ**\n\n"
-            "Здесь ты можешь приобрести уникальные лимитированные префиксы за монеты или настроить уже имеющиеся!"
-        )
-        keyboard = [
-            [InlineKeyboardButton("🛒 Купить титул", callback_data="titlemenu_buy")],
-            [InlineKeyboardButton("💼 Мои титулы / Надеть", callback_data="titlemenu_my")]
-        ]
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    # Процесс покупки титула
-    elif data.startswith("buytitle_"):
-        title_id = data.split("_")[1]
-        if title_id in SHOP_TITLES:
-            info = SHOP_TITLES[title_id]
-            success = buy_title_db(user_id, title_id, info['name'], info['price'])
-            
-            if success:
-                await query.message.edit_text(
-                    f"🎉 Поздравляем! Вы успешно приобрели титул **{info['name']}**.\n"
-                    f"Теперь вы можете надеть его в разделе 'Мои титулы'.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💼 В инвентарь", callback_data="titlemenu_my")]])
-                )
-            else:
-                await query.message.edit_text(
-                    f"❌ Не удалось купить титул. Возможно, у вас недостаточно монет! Требуется: {info['price']} 🪙",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏪 В магазин", callback_data="titlemenu_buy")]])
-                )
-
-    # Процесс экипировки
-    elif data.startswith("equiptitle_"):
-        title_id = data.split("_")[1]
-        if title_id == "none":
-            set_active_title(user_id, "Нет титула")
-            await query.message.edit_text("Вы сняли свой титул.", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_my")]]))
-        else:
-            owned = get_owned_titles(user_id)
-            if title_id in owned:
-                set_active_title(user_id, owned[title_id])
-                await query.message.edit_text(f"✅ Вы успешно активировали титул: **{owned[title_id]}**!", 
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_my")]]))
-
-
-# ==================== ОСТАЛЬНЫЕ КОМАНДЫ ====================
-
-async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('SELECT first_name, coins FROM users ORDER BY coins DESC LIMIT 10')
-    leaders = cursor.fetchall()
-    conn.close()
-
-    if not leaders:
-        await update.message.reply_text("🏆 Топ пока пуст.")
-        return
-
-    text = "🏆 **ТАБЛИЦА БОГАЧЕЙ:**\n\n"
-    for index, leader in enumerate(leaders):
-        medal = "🥇" if index == 0 else "🥈" if index == 1 else "🥉" if index == 2 else f"{index + 1}."
-        text += f"{medal} **{leader[0]}** — {leader[1]} 🪙\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-async def reset_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ Эта кнопка предназначена только для
+    increment_packs(user_
