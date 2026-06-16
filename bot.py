@@ -30,6 +30,15 @@ EMPTY_RESPONSES = [
     "Пустышка! Но не унывай, монеты целы — крути еще! 🪙"
 ]
 
+# ==================== АССОРТИМЕНТ МАГАЗИНА ТИТУЛОВ ====================
+SHOP_TITLES = {
+    "title_collector": {"name": "🕶️ Коллекционер", "price": 150, "desc": "Выдается истинным ценителям прекрасного."},
+    "title_rich": {"name": "💵 Магнат DAcards", "price": 500, "desc": "Для тех, кто сорит монетами направо и налево."},
+    "title_lucky": {"name": "🍀 Любимчик Фортуны", "price": 1000, "desc": "Титул, притягивающий удачу (но это неточно)."},
+    "title_legend": {"name": "🦅 Легенда Леса", "price": 2500, "desc": "Лимитированный статус величайшего лесного хакера."},
+    "title_overlord": {"name": "🌌 Повелитель Рандома", "price": 5000, "desc": "Абсолютный статус. Все паки трепещут перед вами."}
+}
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
@@ -37,6 +46,7 @@ logging.basicConfig(
 TOKEN = "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg"
 ADMIN_ID = 7501899378
 DB_FILE = "bot_database.db"
+
 
 # ==================== ВЕБ-СЕРВЕР ДЛЯ RENDER ====================
 def run_health_server():
@@ -61,11 +71,18 @@ def init_db():
                        user_id INTEGER PRIMARY KEY,
                        first_name TEXT,
                        coins INTEGER DEFAULT 0,
-                       packs_opened INTEGER DEFAULT 0
+                       packs_opened INTEGER DEFAULT 0,
+                       active_title TEXT DEFAULT 'Нет титула'
                    )
                    ''')
+    
+    # Проверка и добавление новых колонок, если база уже существовала
     try:
         cursor.execute('ALTER TABLE users ADD COLUMN packs_opened INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN active_title TEXT DEFAULT 'Нет титула'")
     except sqlite3.OperationalError:
         pass
 
@@ -78,6 +95,18 @@ def init_db():
                        rarity TEXT,
                        file_name TEXT,
                        price INTEGER
+                   )
+                   ''')
+    
+    # Таблица для хранения купленных титулов пользователей
+    cursor.execute('''
+                   CREATE TABLE IF NOT EXISTS titles
+                   (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       user_id INTEGER,
+                       title_id TEXT,
+                       title_name TEXT,
+                       UNIQUE(user_id, title_id)
                    )
                    ''')
     conn.commit()
@@ -99,10 +128,10 @@ def register_user(user_id, first_name):
 def get_user_stats(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT coins, packs_opened FROM users WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT coins, packs_opened, active_title FROM users WHERE user_id = ?', (user_id,))
     res = cursor.fetchone()
     conn.close()
-    return res if res else (0, 0)
+    return res if res else (0, 0, "Нет титула")
 
 
 def increment_packs(user_id):
@@ -147,6 +176,37 @@ def get_rank(packs_count):
     else:
         return "🌌 Абсолютное Божество DAcards"
 
+# Функции для работы с титулами в БД
+def get_owned_titles(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT title_id, title_name FROM titles WHERE user_id = ?', (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def buy_title_db(user_id, title_id, title_name, price):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    try:
+        cursor.execute('UPDATE users SET coins = coins - ? WHERE user_id = ? AND coins >= ?', (price, user_id, price))
+        if cursor.rowcount > 0:
+            cursor.execute('INSERT OR IGNORE INTO titles (user_id, title_id, title_name) VALUES (?, ?, ?)', (user_id, title_id, title_name))
+            conn.commit()
+            return True
+        return False
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+def set_active_title(user_id, title_name):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET active_title = ? WHERE user_id = ?', (title_name, user_id))
+    conn.commit()
+    conn.close()
+
 
 # ==================== ЛОГИКА БОТА ====================
 
@@ -158,7 +218,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ['🎁 Открыть пак', '🏪 Магазин-Обменник'],
         ['🗂 Моя коллекция', '🏆 Топ игроков'],
-        ['👤 Профиль', '🧹 Сбросить прогресс']
+        ['👤 Профиль', '🏅 Магазин титулов'],
+        ['🧹 Сбросить прогресс']
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -173,15 +234,16 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_cards = get_user_cards(user_id)
     total_cards = len(user_cards)
 
-    coins, packs_opened = get_user_stats(user_id)
+    coins, packs_opened, active_title = get_user_stats(user_id)
     rank = get_rank(packs_opened)
 
     profile_text = (
         "━━━━━━━━━━━━━━\n"
         "👤 **ПРОФИЛЬ**\n\n"
+        f"🏅 **Префикс-Титул:** {active_title}\n"
         f"🗂 **Карт в наличии:** {total_cards}\n"
         f"💰 **Монет:** {coins}\n"
-        f"🏆 **Ранг:** {rank}\n\n"
+        f"🏆 **Ранг паков:** {rank}\n\n"
         f"📦 **Паков открыто всего:** {packs_opened}\n"
         "━━━━━━━━━━━━━━"
     )
@@ -235,15 +297,15 @@ async def open_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waiting_message = await update.message.reply_text("🃏 Открывается карта...")
     await asyncio.sleep(0.2)
 
-    # 1. ШАНС ПУСТЫШЕК: Настроен на 65%
-    if random.random() <= 0.65:
+    # 1. ШАНС ПУСТЫШЕК: Изменен ровно на 50%
+    if random.random() <= 0.50:
         increment_packs(user_id)
         await waiting_message.delete()
         fail_text = random.choice(EMPTY_RESPONSES)
         await update.message.reply_text(f"💨 **Ничего не выпало!**\n\n{fail_text}")
         return
 
-    # 2. ШАНС КАРТ (Оставшиеся 35% делятся по редкостям)
+    # 2. ШАНС КАРТ (Оставшиеся 50% делятся по редкостям)
     def get_random_card():
         rarity_roll = random.uniform(0, 100)
         
@@ -412,6 +474,114 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ==================== ЛОГИКА ТИТУЛОВ (НОВОЕ) ====================
+
+async def titles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🏅 **РЫНОК И УПРАВЛЕНИЕ ТИТУЛАМИ**\n\n"
+        "Здесь ты можешь приобрести уникальные лимитированные префиксы за монеты или настроить уже имеющиеся!"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🛒 Купить титул", callback_data="titlemenu_buy")],
+        [InlineKeyboardButton("💼 Мои титулы / Надеть", callback_data="titlemenu_my")]
+    ]
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+
+async def titles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+
+    # Главное подменю: Магазин
+    if data == "titlemenu_buy":
+        owned = get_owned_titles(user_id)
+        keyboard = []
+        text = "🛒 **МАГАЗИН ЛИМИТИРОВАННЫХ ТИТУЛОВ**\n\n"
+        
+        for tid, info in SHOP_TITLES.items():
+            status = " (Куплено) ✅" if tid in owned else f" — {info['price']} 🪙"
+            text += f"• **{info['name']}**{status}\n_{info['desc']}_\n\n"
+            
+            if tid not in owned:
+                keyboard.append([InlineKeyboardButton(f"Купить {info['name']}", callback_data=f"buytitle_{tid}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_back")])
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    # Главное подменю: Инвентарь титулов
+    elif data == "titlemenu_my":
+        owned = get_owned_titles(user_id)
+        coins, packs, active_title = get_user_stats(user_id)
+        
+        text = f"💼 **ТВОЯ СУМКА С ТИТУЛАМИ**\n\nТекущий префикс: `{active_title}`\n\n"
+        keyboard = []
+        
+        if not owned:
+            text += "У тебя пока нет покупных титулов. Купи что-нибудь в магазине!"
+        else:
+            text += "Выбери титул ниже, чтобы закрепить его в профиле:"
+            for tid, tname in owned.items():
+                # Помечаем галочкой тот, который надет в данный момент
+                display_name = f"🟢 {tname}" if tname == active_title else tname
+                keyboard.append([InlineKeyboardButton(display_name, callback_data=f"equiptitle_{tid}")])
+        
+        # Кнопка снятия титула (возврат к дефолту)
+        if active_title != "Нет титула":
+            keyboard.append([InlineKeyboardButton("❌ Снять текущий титул", callback_data="equiptitle_none")])
+            
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_back")])
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    # Возврат в главное меню титулов
+    elif data == "titlemenu_back":
+        text = (
+            "🏅 **РЫНОК И УПРАВЛЕНИЕ ТИТУЛАМИ**\n\n"
+            "Здесь ты можешь приобрести уникальные лимитированные префиксы за монеты или настроить уже имеющиеся!"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🛒 Купить титул", callback_data="titlemenu_buy")],
+            [InlineKeyboardButton("💼 Мои титулы / Надеть", callback_data="titlemenu_my")]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    # Процесс покупки титула
+    elif data.startswith("buytitle_"):
+        title_id = data.split("_")[1]
+        if title_id in SHOP_TITLES:
+            info = SHOP_TITLES[title_id]
+            success = buy_title_db(user_id, title_id, info['name'], info['price'])
+            
+            if success:
+                await query.message.edit_text(
+                    f"🎉 Поздравляем! Вы успешно приобрели титул **{info['name']}**.\n"
+                    f"Теперь вы можете надеть его в разделе 'Мои титулы'.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💼 В инвентарь", callback_data="titlemenu_my")]])
+                )
+            else:
+                await query.message.edit_text(
+                    f"❌ Не удалось купить титул. Возможно, у вас недостаточно монет! Требуется: {info['price']} 🪙",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏪 В магазин", callback_data="titlemenu_buy")]])
+                )
+
+    # Процесс экипировки
+    elif data.startswith("equiptitle_"):
+        title_id = data.split("_")[1]
+        if title_id == "none":
+            set_active_title(user_id, "Нет титула")
+            await query.message.edit_text("Вы сняли свой титул.", 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_my")]]))
+        else:
+            owned = get_owned_titles(user_id)
+            if title_id in owned:
+                set_active_title(user_id, owned[title_id])
+                await query.message.edit_text(f"✅ Вы успешно активировали титул: **{owned[title_id]}**!", 
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="titlemenu_my")]]))
+
+
+# ==================== ОСТАЛЬНЫЕ КОМАНДЫ ====================
+
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -432,4 +602,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id =
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Эта кнопка предназначена только для
