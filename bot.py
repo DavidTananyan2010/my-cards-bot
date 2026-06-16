@@ -55,7 +55,7 @@ ADMIN_ID = 7501899378
 COOLDOWNS = {}
 COOLDOWN_TIME = 1.5 
 
-# ==================== ОБНОВЛЕННАЯ СТИЛЬНАЯ КЛАВИАТУРА КНОПОК ====================
+# ==================== СТИЛЬНАЯ КЛАВИАТУРА КНОПОК ====================
 def get_main_keyboard():
     buttons = [
         ["📦 Открыть пак", "👤 Мой профиль"],      # Ряд 1
@@ -238,14 +238,11 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     # --- БЕЗОПАСНЫЙ СБРОС ДАННЫХ ---
     if data == "confirm_full_reset":
-        # Полное обнуление параметров в MongoDB
         users_col.update_one(
             {"user_id": user_id},
             {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}}
         )
-        # Полное удаление карт пользователя
         collections_col.delete_many({"user_id": user_id})
-        
         await query.edit_message_text("♻️ *Ваш прогресс успешно аннулирован!*\nБаланс сброшен до 500 монет, коллекция полностью очищена.", parse_mode="Markdown")
         return
         
@@ -402,7 +399,9 @@ def main():
     application.add_handler(MessageHandler(filters.Text("🗂️ Моя коллекция"), collection_handler))
     application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
     application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
-    application.add_handler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler) # Новая кнопка
+    
+    # ИСПРАВЛЕНО: Теперь кнопка завернута в правильный MessageHandler
+    application.add_handler(MessageHandler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler))
     
     application.add_handler(CommandHandler("givecoins", admin_give_coins))
     application.add_handler(CommandHandler("givetitle", admin_give_title))
