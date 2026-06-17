@@ -3,7 +3,7 @@ from telebot import types
 import uuid
 import random
 
-TOKEN = "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg"
+TOKEN = "8701989939:AAHe0GFEeeSYXOEoVeE1kTQZ0cY71gXFLqI"
 bot = telebot.TeleBot(TOKEN)
 
 # 👑 ID Главного Администратора (Королевы улья)
