@@ -7,7 +7,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # 🔑 Токен бота (автоматически берется из Render или используется твой)
-TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAFVTHvkObrmq6EsQClsTByOEL7tJNqg4_Q")
+TOKEN = os.environ.get("BOT_TOKEN", "8796574384:AAExBE-BZkvZoMiAIeSuWNHWvo5yULNihb8")
 bot = telebot.TeleBot(TOKEN)
 
 # 👑 ID Главного Администратора (Творца) — ОБЯЗАТЕЛЬНО ПРОВЕРЬ ЕГО!
