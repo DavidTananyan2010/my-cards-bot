@@ -11,7 +11,7 @@ ADMIN_ID = 7501899378
 
 # ==================== БАЗА ДАННЫХ И СИСТЕМНЫЕ ПЕРЕМЕННЫЕ ====================
 players = {}
-market_lots = {}           # Рынок: {lot_id: {"seller_id": uid, "card": card, "price": price}}
+market_lots = {}       # Рынок: {lot_id: {"seller_id": uid, "card": card, "price": price}}
 breeding_sessions = {}
 FROZEN_USERS = set()       
 BANNED_USERS = set()       
@@ -166,7 +166,7 @@ def marry_callback(call):
         players[uid]["spouse"] = None
         if spouse_id in players: players[spouse_id]["spouse"] = None
         bot.edit_message_text("💔 Брачный союз расторгнут. Вы снова одинокая особь.", call.message.chat.id, call.message.message_id)
-        try: bot.send_message(spouse_id, f"💔 Особь **{players[uid]['username']} расторгла брачный союз с вами.")
+        try: bot.send_message(spouse_id, f"💔 Особь {players[uid]['username']} расторгла брачный союз с вами.")
         except Exception: pass
         
     elif data.startswith("deny_"):
@@ -351,7 +351,7 @@ def market_callback(call):
         if not card: return
         
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        msg = bot.send_message(call.message.chat.id, f"📊 Укажите **цену в монетах, за которую вы хотите продать **:")
+        msg = bot.send_message(call.message.chat.id, f"📊 Укажите **цену в монетах, за которую вы хотите продать {card['name']}:**")
         bot.register_next_step_handler(msg, process_market_price, cid)
         bot.answer_callback_query(call.id)
         
@@ -426,8 +426,9 @@ def buy_callback(call):
         card = {"id": str(uuid.uuid4())[:8], "name": chosen["name"], "rarity": chosen["rarity"], "price": chosen["price"]}
         players[uid]["inventory"].append(card)
         bot.send_message(message.chat.id, f"🛒 Куплен обычный пак! Вылупился: **")
+        
     elif goods == "rare":
-         if players[uid]["balance"] < RARE_PACK_PRICE:
+        if players[uid]["balance"] < RARE_PACK_PRICE:
             bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
             return
         players[uid]["balance"] -= RARE_PACK_PRICE
@@ -436,6 +437,7 @@ def buy_callback(call):
         card = {"id": str(uuid.uuid4())[:8], "name": f"🔥 {chosen['name']}", "rarity": chosen["rarity"], "price": chosen["price"] * 2}
         players[uid]["inventory"].append(card)
         bot.send_message(message.chat.id, f"🛒 Вылупилась Элитная особь: **{card['name']}**")
+        
     elif goods == "title_vip":
         if players[uid]["balance"] < 300:
             bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
