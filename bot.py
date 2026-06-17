@@ -61,7 +61,7 @@ def main_keyboard():
     markup.row("📦 Открыть пак", "👤 Профиль | 🏆 Топ")
     markup.row("📁 Коллекция", "🚀 Прокачка & Крафт")
     markup.row("🛍️ Магазин", "🏪 Рынок Улья")
-    markup.row("🎲 ЗАГС & Квесты", "🎁 Бонусы & Донат")
+    markup.row("🎁 Бонусы & Донат", "⚔️ Походы & Битвы") # 🎲 ЗАГС убран из главного меню
     return markup
 
 # ==================== ОБЫЧНОЕ ИГРОВОЕ МЕНЮ ====================
@@ -85,16 +85,97 @@ def profile_cmd(message):
     p = players[uid]
     spouse = players[p["spouse"]]["username"] if p.get("spouse") and p["spouse"] in players else "Нет"
     
+    # Генерация Топ-5 богачей
+    top_players = sorted(players.items(), key=lambda x: x[1]["balance"], reverse=True)[:5]
+    top_text = "\n".join([f"{i+1}. {pl['username']} — `{pl['balance']}` 💰" for i, (pid, pl) in enumerate(top_players)])
+
+    # Инлайн-кнопка ЗАГСа прямо в профиле
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❤️ Управление Союзом (ЗАГС)", callback_data="mar_main_menu"))
+
     bot.send_message(
         message.chat.id, 
-        f"👤 **Профиль {p['username']}:**\n\n"
+        f"👤 **Профиль {p['username']}:**\n"
         f"💰 **Баланс биомассы:** `{p['balance']}` монет\n"
         f"👑 **Титулы:** {', '.join(p['titles'])}\n"
         f"❤️ **Союз:** {spouse}\n"
-        f"🎒 **Карт в коллекции: {len(p['inventory'])} шт.", 
-        parse_mode="Markdown"
+        f"🎒 **Карт в коллекции:** {len(p['inventory'])} шт.\n\n"
+        f"🏆 **ТОП-5 БОГАЧЕЙ УЛЬЯ:**\n{top_text}", 
+        parse_mode="Markdown",
+        reply_markup=markup
     )
 
+# ==================== ИНТЕРФЕЙС ЗАГСА ВНУТРИ ПРОФИЛЯ ====================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mar_"))
+def marry_callback(call):
+    uid = call.from_user.id
+    init_player(uid, call.from_user.first_name)
+    data = call.data.replace("mar_", "")
+    
+    if data == "main_menu":
+        markup = types.InlineKeyboardMarkup()
+        markup.row(types.InlineKeyboardButton("💍 Заключить Союз", callback_data="mar_list"), 
+                   types.InlineKeyboardButton("💔 Расторгнуть Союз", callback_data="mar_divorce"))
+        
+        bot.edit_message_text(
+            f"🎲 **Муравьиный ЗАГС**\n\nСемейный союз связывает двух игроков, давая бонус **+10% к стоимости сдачи карт** в улей!",
+            call.message.chat.id, call.message.message_id, reply_markup=markup
+        )
+        
+    elif data == "list":
+        if players[uid].get("spouse"):
+            bot.answer_callback_query(call.id, "❌ Вы уже состоите в союзе!", show_alert=True)
+            return
+        free_players = [pid for pid, p in players.items() if pid != uid and not p.get("spouse")]
+        if not free_players:
+            bot.answer_callback_query(call.id, "🐜 Свободных особей в улье пока нет.", show_alert=True)
+            return
+        markup = types.InlineKeyboardMarkup()
+        for pid in free_players[:8]:
+            markup.add(types.InlineKeyboardButton(f"🐝 {players[pid]['username']}", callback_data=f"mar_req_{pid}"))
+        bot.edit_message_text("💍 Выберите особь для отправки брачных феромонов:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        
+    elif data.startswith("req_"):
+        target_id = int(data.replace("req_", ""))
+        if players[uid].get("spouse") or players[target_id].get("spouse"): return
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.row(types.InlineKeyboardButton("✅ Принять", callback_data=f"mar_accept_{uid}"), types.InlineKeyboardButton("❌ Отклонить", callback_data=f"mar_deny_{uid}"))
+        try:
+            bot.send_message(target_id, f"💍 Особь **{players[uid]['username']}** предлагает вам брачный союз! Вы согласны?", reply_markup=markup)
+            bot.edit_message_text("💌 Феромоны союза отправлены. Ожидайте ответа партнера.", call.message.chat.id, call.message.message_id)
+        except Exception:
+            bot.answer_callback_query(call.id, "❌ Ошибка отправки запроса (возможно, бот заблокирован пользователем).", show_alert=True)
+
+    elif data.startswith("accept_"):
+        prop_id = int(data.replace("accept_", ""))
+        if players[uid].get("spouse") or players[prop_id].get("spouse"): 
+            bot.edit_message_text("❌ Кто-то из вас уже успел вступить в союз!", call.message.chat.id, call.message.message_id)
+            return
+        players[uid]["spouse"] = prop_id
+        players[prop_id]["spouse"] = uid
+        bot.edit_message_text("❤️ Брачный союз официально заключен! Бонус +10% к сдаче карт активирован.", call.message.chat.id, call.message.message_id)
+        try: bot.send_message(prop_id, f"🎉 Особь **{players[uid]['username']}** приняла ваше предложение союза!")
+        except Exception: pass
+
+    elif data == "divorce":
+        spouse_id = players[uid].get("spouse")
+        if not spouse_id:
+            bot.answer_callback_query(call.id, "❌ Вы не состоите в союзе.", show_alert=True)
+            return
+        players[uid]["spouse"] = None
+        if spouse_id in players: players[spouse_id]["spouse"] = None
+        bot.edit_message_text("💔 Брачный союз расторгнут. Вы снова одинокая особь.", call.message.chat.id, call.message.message_id)
+        try: bot.send_message(spouse_id, f"💔 Особь **{players[uid]['username']} расторгла брачный союз с вами.")
+        except Exception: pass
+        
+    elif data.startswith("deny_"):
+        prop_id = int(data.replace("deny_", ""))
+        bot.edit_message_text("❌ Вы отклонили предложение союза.", call.message.chat.id, call.message.message_id)
+        try: bot.send_message(prop_id, f"💔 Ваше предложение союза было отклонено.")
+        except Exception: pass
+
+# ==================== ОСТАЛЬНЫЕ ИГРОВЫЕ ФУНКЦИИ ====================
 @bot.message_handler(func=lambda msg: msg.text == "📦 Открыть пак")
 def open_pack(message):
     if not check_access(message): return
@@ -146,7 +227,27 @@ def sell_callback(call):
         bot.answer_callback_query(call.id, f"Сдано за {payout} монет!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-# ==================== СИСТЕМА СЕЛЕКЦИИ (СКРЕЩИВАНИЕ) ====================
+@bot.message_handler(func=lambda msg: msg.text == "⚔️ Походы & Битвы")
+def battles_menu(message):
+    if not check_access(message): return
+    uid = message.from_user.id
+    init_player(uid, message.from_user.first_name)
+    
+    if not players[uid]["inventory"]:
+        bot.send_message(message.chat.id, "❌ Ваши казармы пусты. Вырастите хотя бы одну особь в инкубаторе для отправки в поход!")
+        return
+        
+    bot.send_message(message.chat.id, "🐜 Отряд собирает маршевые феромоны и отправляется в дикие земли...")
+    
+    if random.choice([True, False]):
+        loot = random.randint(40, 100)
+        players[uid]["balance"] += loot
+        bot.send_message(message.chat.id, f"⚔️ **Поход завершился триумфом!**\nВаш отряд разгромил гнездо диких термитов и принес в улей `+{loot}` монет биомассы!", parse_mode="Markdown")
+    else:
+        loss = random.randint(15, 45)
+        players[uid]["balance"] = max(0, players[uid]["balance"] - loss)
+        bot.send_message(message.chat.id, f"💔 **Набег сорвался!**\nВы попали в засаду паука-охотника. Потери улья составили `-{loss}` монет.", parse_mode="Markdown")
+
 @bot.message_handler(func=lambda msg: msg.text == "🚀 Прокачка & Крафт")
 def craft_menu(message):
     if not check_access(message): return
@@ -210,7 +311,6 @@ def breed_callback(call):
         
         bot.edit_message_text(f"🎉 **Скрещивание успешно!**\nВывели новый вид: *{hybrid['name']}*\n💰 Ценность новой особи: `{hybrid['price']}` монет!", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# ==================== СИСТЕМА РЫНКА УЛЬЯ (P2P МАРКЕТ) ====================
 @bot.message_handler(func=lambda msg: msg.text == "🏪 Рынок Улья")
 def market_menu(message):
     if not check_access(message): return
@@ -232,7 +332,7 @@ def market_menu(message):
             
         bot.send_message(
             message.chat.id, 
-            f"📦 **Лот: {lot['card']['name']}\n"
+            f"📦 **Лот:** {lot['card']['name']}\n"
             f"💎 Редкость: {lot['card']['rarity']}\n"
             f"👤 Продавец: {seller}\n"
             f"💰 Цена сделки: `{lot['price']}` монет", 
@@ -249,28 +349,31 @@ def market_callback(call):
         cid = data.replace("pre_", "")
         card = next((c for c in players[uid]["inventory"] if c["id"] == cid), None)
         if not card: return
-        bot.send_message(call.message.chat.id, f"💡 Чтобы установить цену и выставить ** на рынок, введите команду:\n`/sell_market {cid} [Цена]`")
+        
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        msg = bot.send_message(call.message.chat.id, f"📊 Укажите **цену в монетах, за которую вы хотите продать **:")
+        bot.register_next_step_handler(msg, process_market_price, cid)
         bot.answer_callback_query(call.id)
         
     elif data.startswith("buy_"):
         lid = data.replace("buy_", "")
         lot = market_lots.get(lid)
         if not lot:
-            bot.answer_callback_query(call.id, "❌ Лот уже продан или снят с рынка!", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Лот уже продан!", show_alert=True)
             return
         if players[uid]["balance"] < lot["price"]:
-            bot.answer_callback_query(call.id, "❌ У вас недостаточно монет для покупки!", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
             return
             
         players[uid]["balance"] -= lot["price"]
         players[lot["seller_id"]]["balance"] += lot["price"]
         players[uid]["inventory"].append(lot["card"])
         
-        try: bot.send_message(lot["seller_id"], f"💰 Вашу карту **{lot['card']['name']} купили на рынке за {lot['price']} монет!")
+        try: bot.send_message(lot["seller_id"], f"💰 Вашу карту **{lot['card']['name']} купили за {lot['price']} монет!")
         except Exception: pass
         
         del market_lots[lid]
-        bot.edit_message_text("🎉 Вы успешно приобрели особь с рынка улья!", call.message.chat.id, call.message.message_id)
+        bot.edit_message_text("🎉 Вы успешно приобрели особь с рынка!", call.message.chat.id, call.message.message_id)
 
     elif data.startswith("cancel_"):
         lid = data.replace("cancel_", "")
@@ -278,105 +381,27 @@ def market_callback(call):
         if lot and lot["seller_id"] == uid:
             players[uid]["inventory"].append(lot["card"])
             del market_lots[lid]
-            bot.edit_message_text("❌ Вы сняли особь с продажи. Карта вернулась в вашу коллекцию.", call.message.chat.id, call.message.message_id)
+            bot.edit_message_text("❌ Лот снят. Карта вернулась в вашу коллекцию.", call.message.chat.id, call.message.message_id)
 
-@bot.message_handler(commands=['sell_market'])
-def sell_market_cmd(message):
-    if not check_access(message): return
+def process_market_price(message, cid):
     uid = message.from_user.id
-    init_player(uid, message.from_user.first_name)
-    args = message.text.split()
-    if len(args) < 3:
-        bot.send_message(message.chat.id, "⚠️ Использование: `/sell_market [ID_карты] [Цена]`")
+    try:
+        price = int(message.text)
+        if price <= 0: raise ValueError
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Некорректная цена. Выставление на рынок отменено.")
         return
-    cid, price = args[1], int(args[2])
-    if price <= 0: return
-    
+
     card = next((c for c in players[uid]["inventory"] if c["id"] == cid), None)
     if not card:
-        bot.send_message(message.chat.id, "❌ Данная особь не найдена в вашей коллекции.")
+        bot.send_message(message.chat.id, "❌ Карта не найдена.")
         return
-        
+
     lid = str(uuid.uuid4())[:6]
     market_lots[lid] = {"seller_id": uid, "card": card, "price": price}
     players[uid]["inventory"].remove(card)
-    bot.send_message(message.chat.id, f"✅ Карта ** выставлена на общий рынок за `{price}` монет!")
+    bot.send_message(message.chat.id, f"✅ Карта ** успешно выставлена на рынок за `{price}` монет!", parse_mode="Markdown")
 
-# ==================== ИНТЕРАКТИВНЫЙ ЗАГС И БРАКИ ====================
-@bot.message_handler(func=lambda msg: msg.text == "🎲 ЗАГС & Квесты")
-def quests_menu(message):
-    if not check_access(message): return
-    uid = message.from_user.id
-    init_player(uid, message.from_user.first_name)
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("💍 Заключить Союз", callback_data="mar_list"), types.InlineKeyboardButton("💔 Расторгнуть Союз", callback_data="mar_divorce"))
-    
-    bot.send_message(
-        message.chat.id, 
-        f"🎲 **Муравьиный ЗАГС и Отношения**\n\n"
-        f"Семейный союз связывает феромоны двух игроков, давая постоянный бонус **+10% к стоимости сдачи карт** в улей!\n\n"
-        f"Выберите действие на кнопках ниже:", 
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("mar_"))
-def marry_callback(call):
-    uid = call.from_user.id
-    init_player(uid, call.from_user.first_name)
-    data = call.data.replace("mar_", "")
-    
-    if data == "list":
-        if players[uid].get("spouse"):
-            bot.answer_callback_query(call.id, "❌ Вы уже состоите в союзе!", show_alert=True)
-            return
-        free_players = [pid for pid, p in players.items() if pid != uid and not p.get("spouse")]
-        if not free_players:
-            bot.answer_callback_query(call.id, "🐜 В улье пока нет других свободных особей.", show_alert=True)
-            return
-        markup = types.InlineKeyboardMarkup()
-        for pid in free_players[:8]:
-            markup.add(types.InlineKeyboardButton(f"🐝 {players[pid]['username']}", callback_data=f"mar_req_{pid}"))
-        bot.edit_message_text("💍 Выберите свободную особь для отправки предложения:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        
-    elif data.startswith("req_"):
-        target_id = int(data.replace("req_", ""))
-        if players[uid].get("spouse") or players[target_id].get("spouse"): return
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.row(types.InlineKeyboardButton("✅ Принять", callback_data=f"mar_accept_{uid}"), types.InlineKeyboardButton("❌ Отклонить", callback_data=f"mar_deny_{uid}"))
-        try:
-            bot.send_message(target_id, f"💍 Особь **{players[uid]['username']}** предлагает вам заключить брачный союз! Вы согласны?", reply_markup=markup)
-            bot.edit_message_text("💌 Свадебные феромоны улетели к избраннику. Ожидайте ответа.", call.message.chat.id, call.message.message_id)
-        except Exception:
-            bot.answer_callback_query(call.id, "❌ Ошибка отправки запроса.", show_alert=True)
-
-    elif data.startswith("accept_"):
-        prop_id = int(data.replace("accept_", ""))
-        players[uid]["spouse"] = prop_id
-        players[prop_id]["spouse"] = uid
-        bot.edit_message_text("❤️ Брачный союз успешно заключен! Бонус +10% к сдаче карт активирован.", call.message.chat.id, call.message.message_id)
-        try: bot.send_message(prop_id, f"🎉 Особь **{players[uid]['username']}** приняла ваше предложение! Союз заключен.")
-        except Exception: pass
-
-    elif data == "divorce":
-        spouse_id = players[uid].get("spouse")
-        if not spouse_id:
-            bot.answer_callback_query(call.id, "❌ Вы не состоите в союзе.", show_alert=True)
-            return
-        players[uid]["spouse"] = None
-        if spouse_id in players: players[spouse_id]["spouse"] = None
-        bot.edit_message_text("💔 Брачный союз расторгнут. Бонус сдачи аннулирован.", call.message.chat.id, call.message.message_id)
-        try: bot.send_message(spouse_id, f"💔 Особь **{players[uid]['username']}** расторгла брачный союз с вами.")
-        except Exception: pass
-        
-    elif data.startswith("deny_"):
-        prop_id = int(data.replace("deny_", ""))
-        bot.edit_message_text("❌ Предложение отклонено.", call.message.chat.id, call.message.message_id)
-        try: bot.send_message(prop_id, f"💔 Особь отклонила ваше брачное предложение.")
-        except Exception: pass
-
-# ==================== ОСТАЛЬНЫЕ СИСТЕМНЫЕ КНОПКИ ====================
 @bot.message_handler(func=lambda msg: msg.text == "🛍️ Магазин")
 def store_menu(message):
     if not check_access(message): return
@@ -384,7 +409,7 @@ def store_menu(message):
     markup.row(types.InlineKeyboardButton(f"📦 Инкубатор ({PACK_PRICE} 💰)", callback_data="buy_pack"))
     markup.row(types.InlineKeyboardButton(f"💎 Элитный кокон ({RARE_PACK_PRICE} 💰)", callback_data="buy_rare"))
     markup.row(types.InlineKeyboardButton("👑 Купить Титул [⭐️ VIP] (300 💰)", callback_data="buy_title_vip"))
-    bot.send_message(message.chat.id, "🛍️ **Добро пожаловать в Магазин улья!\nВыберите товар:", reply_markup=markup)
+    bot.send_message(message.chat.id, "🛍️ **Добро пожаловать в Магазин улья!", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def buy_callback(call):
@@ -402,7 +427,7 @@ def buy_callback(call):
         players[uid]["inventory"].append(card)
         bot.send_message(message.chat.id, f"🛒 Куплен обычный пак! Вылупился: **")
     elif goods == "rare":
-        if players[uid]["balance"] < RARE_PACK_PRICE:
+        if @players[uid]["balance"] < RARE_PACK_PRICE:
             bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
             return
         players[uid]["balance"] -= RARE_PACK_PRICE
@@ -416,7 +441,7 @@ def buy_callback(call):
             bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
             return
         if "⭐️ VIP" in players[uid]["titles"]:
-            bot.answer_callback_query(call.id, "❌ У вас уже есть этот титул!", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Титул уже есть!", show_alert=True)
             return
         players[uid]["balance"] -= 300
         players[uid]["titles"].append("⭐️ VIP")
@@ -427,27 +452,33 @@ def donate_menu(message):
     if not check_access(message): return
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🎭 Сменить имя внутри улья", callback_data="change_name_trigger"))
+    
     bot.send_message(
         message.chat.id, 
         f"🏦 **Центральный Муравьиный Банк**\n━━━━━━━━━━━━━━━━━━━━\n"
         f"💳 Счет аккаунта: `{players[uid]['balance']}` монет биомассы.\n\n"
-        f"🎭 **Кастомизация профиля:**\n"
-        f"Смена вашего имени внутри улья:\n"
-        f"👉 Напишите в чат: `/myname [Новое_Имя]`",
-        parse_mode="Markdown"
+        f"Вы можете кастомизировать профиль кнопкой ниже:",
+        parse_mode="Markdown", reply_markup=markup
     )
 
-@bot.message_handler(commands=['myname'])
-def change_my_name_cmd(message):
-    if not check_access(message): return
+@bot.callback_query_handler(func=lambda call: call.data == "change_name_trigger")
+def change_name_trigger_callback(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    msg = bot.send_message(call.message.chat.id, "🎭 Напишите ваше **новое имя** для отображения в улье:")
+    bot.register_next_step_handler(msg, process_name_change)
+    bot.answer_callback_query(call.id)
+
+def process_name_change(message):
     uid = message.from_user.id
-    init_player(uid, message.from_user.first_name)
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.send_message(message.chat.id, "⚠️ Использование: `/myname [Ваше новое имя]`")
+    new_name = message.text.strip()
+    if len(new_name) < 2 or len(new_name) > 20:
+        bot.send_message(message.chat.id, "❌ Длина имени должна быть от 2 до 20 символов.")
         return
-    players[uid]["username"] = parts[1]
-    bot.send_message(message.chat.id, f"🎉 Кастомизация успешна! Теперь вас зовут: **{parts[1]}**", parse_mode="Markdown")
+    players[uid]["username"] = new_name
+    bot.send_message(message.chat.id, f"🎉 Имя успешно изменено! Теперь вас зовут: **{new_name}**", parse_mode="Markdown")
 
 # ==================== АДМИН-ПАНЕЛЬ И СИСТЕМНЫЕ КОМАНДЫ ====================
 @bot.message_handler(commands=['admin_panel'])
