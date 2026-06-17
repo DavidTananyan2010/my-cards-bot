@@ -1,10 +1,14 @@
+import os
+import threading
 import telebot
 from telebot import types
 import uuid
 import random
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# 🔑 Новый актуальный токен бота
-TOKEN = "8701989939:AAFVTHvkObrmq6EsQClsTByOEL7tJNqg4_Q"
+# 🔑 Токен берется из переменных окружения Render (BOT_TOKEN). 
+# Если её нет, используется указанный тобой токен.
+TOKEN = os.environ.get("BOT_TOKEN", "8701989939:AAFVTHvkObrmq6EsQClsTByOEL7tJNqg4_Q")
 bot = telebot.TeleBot(TOKEN)
 
 # 👑 ID Главного Администратора (Королевы улья)
@@ -156,7 +160,7 @@ def marry_callback(call):
         players[uid]["spouse"] = prop_id
         players[prop_id]["spouse"] = uid
         bot.edit_message_text("❤️ Брачный союз официально заключен! Бонус +10% к сдаче карт активирован.", call.message.chat.id, call.message.message_id)
-        try: bot.send_message(prop_id, f"🎉 Особь **{players[uid]['username']}** приняла ваше предложение союза!")
+        try: bot.send_message(prop_id, f"🎉 Особь **{players[uid]['username']} приняла ваше предложение союза!")
         except Exception: pass
 
     elif data == "divorce":
@@ -426,7 +430,7 @@ def buy_callback(call):
         chosen = random.choice(REAL_CARDS)
         card = {"id": str(uuid.uuid4())[:8], "name": chosen["name"], "rarity": chosen["rarity"], "price": chosen["price"]}
         players[uid]["inventory"].append(card)
-        bot.send_message(message.chat.id, f"🛒 Куплен обычный пак! Вылупился: **")
+        bot.send_message(call.message.chat.id, f"🛒 Куплен обычный пак! Вылупился: **")
         
     elif goods == "rare":
         if players[uid]["balance"] < RARE_PACK_PRICE:
@@ -437,7 +441,7 @@ def buy_callback(call):
         chosen = random.choice(rares)
         card = {"id": str(uuid.uuid4())[:8], "name": f"🔥 {chosen['name']}", "rarity": chosen["rarity"], "price": chosen["price"] * 2}
         players[uid]["inventory"].append(card)
-        bot.send_message(message.chat.id, f"🛒 Вылупилась Элитная особь: **{card['name']}**")
+        bot.send_message(call.message.chat.id, f"🛒 Вылупилась Элитная особь: **{card['name']}**")
         
     elif goods == "title_vip":
         if players[uid]["balance"] < 300:
@@ -448,7 +452,7 @@ def buy_callback(call):
             return
         players[uid]["balance"] -= 300
         players[uid]["titles"].append("⭐️ VIP")
-        bot.send_message(message.chat.id, "🎉 Вы успешно купили титул `[⭐️ VIP]`!")
+        bot.send_message(call.message.chat.id, "🎉 Вы успешно купили титул `[⭐️ VIP]`!")
 
 @bot.message_handler(func=lambda msg: msg.text == "🎁 Бонусы & Донат")
 def donate_menu(message):
@@ -524,5 +528,23 @@ def execute_admin_commands(message):
         BANNED_USERS.add(int(args[0]))
         bot.send_message(message.chat.id, "🚫 Забанен.")
 
+# ==================== СЕРВЕР HEALTH CHECK ДЛЯ RENDER ====================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Hive is alive!")
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
 if __name__ == '__main__':
+    # Если запуск происходит на Render, поднимаем фоновый сервер ответа для проверки портов
+    if os.environ.get("RENDER") or os.environ.get("PORT"):
+        threading.Thread(target=run_health_server, daemon=True).start()
+    
+    # Старт бесконечного поллинга бота
     bot.infinity_polling()
