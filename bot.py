@@ -2,16 +2,19 @@ import telebot
 from telebot import types
 import uuid
 import random
+import time
 
-# 🔑 Токен и ID Администратора
+# 🔑 Данные доступа
 TOKEN = "8930026163:AAGXKa6jYNtPVZ2kTYTpuN2UtlY8ZKxJKWQ"
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
-# ==================== БАЗА ДАННЫХ И ХАРАКТЕРИСТИКИ ====================
+# ==================== БАЗА ДАННЫХ И ПЕРЕМЕННЫЕ ====================
 players = {}
-breeding_sessions = {}  # Для хранения процесса скрещивания
+breeding_sessions = {}  
+pvp_lobby = {}         # Очередь на PvP: {uid: unit_id}
 COCON_PRICE = 50  
+EXPEDITION_COOLDOWN = 600  
 
 COLONY_UNITS = [
     {"name": "Муравей-Воин 🐜", "desc": "Защищает входы в муравейник.", "stats": {"⚔️ Сила": 85, "🛡️ Защита": 60, "📦 Сбор": 10}},
@@ -27,7 +30,8 @@ def init_player(uid, name="Особь"):
         players[uid] = {
             "biomass": 500,           
             "colony": [],             
-            "username": name
+            "username": name,
+            "last_expedition": 0  
         }
 
 def main_keyboard(uid):
@@ -35,6 +39,7 @@ def main_keyboard(uid):
     markup.row("🥚 Инкубатор коконов", "🏰 Мой Муравейник")
     markup.row("📁 Список особи", "🛍️ Магазин Улья")
     markup.row("⚔️ Экспедиции (Походы)", "🧬 Лаборатория Генов")
+    markup.row("🏟️ PvP Битвы Арены")
     if uid == ADMIN_ID:
         markup.row("👑 Управление Ульем")
     return markup
@@ -50,7 +55,7 @@ def start_cmd(message):
     init_player(uid, message.from_user.first_name)
     bot.send_message(
         message.chat.id, 
-        f"🐜 **Приветствуем в обновленном Симуляторе Колонии!**\n\nРазвивайте свой рой, отправляйте отряды в походы и создавайте новые виды мутантов в лаборатории.", 
+        f"🐜 **Приветствуем в Симуляторе Колонии!**\n\nВыращивайте рой, скрещивайте гены и сражайтесь с другими игроками на PvP Арене улья!", 
         parse_mode="Markdown", 
         reply_markup=main_keyboard(uid)
     )
@@ -115,41 +120,50 @@ def release_callback(call):
         bot.answer_callback_query(call.id, f"Насекомое улетело на волю. Получено +{reward} биомассы!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-# ==================== НОВАЯ КНОПКА: ЭКСПЕДИЦИИ ====================
+# ==================== ЭКСПЕДИЦИИ (ПОХОДЫ) ====================
 @bot.message_handler(func=lambda msg: msg.text == "⚔️ Экспедиции (Походы)")
 def expedition_cmd(message):
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
+    
     if not players[uid]["colony"]:
-        bot.send_message(message.chat.id, "❌ У вас нет насекомых, чтобы собрать маршевый отряд!")
+        bot.send_message(message.chat.id, "❌ У вас нет насекомых для боевого роя!")
         return
+        
+    current_time = time.time()
+    time_passed = current_time - players[uid]["last_expedition"]
     
-    bot.send_message(message.chat.id, "⚔️ **Сбор боевого роя...**\nОтряд выдвигается на разведку диких территорий!")
+    if time_passed < EXPEDITION_COOLDOWN:
+        time_left = int(EXPEDITION_COOLDOWN - time_passed)
+        bot.send_message(message.chat.id, f"⏳ **Ваши насекомые устали!** До нового похода осталось: `{time_left // 60} мин. {time_left % 60} сек.`", parse_mode="Markdown")
+        return
+
+    players[uid]["last_expedition"] = current_time
+    bot.send_message(message.chat.id, "⚔️ **Отряд собирает маршевые феромоны...**")
     
-    # Расчет успеха на основе случайности (в будущем можно привязать к силе)
     if random.choice([True, False]):
         loot = random.randint(60, 130)
         players[uid]["biomass"] += loot
-        bot.send_message(message.chat.id, f"🎉 **Экспедиция успешна!**\nВаш рой захватил склад дикого меда термитов. Принесено в улей: `+{loot}` биомассы!", parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"🎉 **Успех!** Рой разгромил гнездо диких термитов. Получено: `+{loot}` биомассы!", parse_mode="Markdown")
     else:
         lost_unit = random.choice(players[uid]["colony"])
         players[uid]["colony"].remove(lost_unit)
-        bot.send_message(message.chat.id, f"💔 **Набег провалился!**\nОтряд попал в ловушку хищной птицы. Из похода не вернулся: **{lost_unit['name']}**")
+        bot.send_message(message.chat.id, f"💔 **Засада!** Из похода не вернулся: **{lost_unit['name']}**")
 
-# ==================== НОВАЯ КНОПКА: ЛАБОРАТОРИЯ ГЕНОВ ====================
+# ==================== ЛАБОРАТОРИЯ ГЕНОВ ====================
 @bot.message_handler(func=lambda msg: msg.text == "🧬 Лаборатория Генов")
 def lab_cmd(message):
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
     if len(players[uid]["colony"]) < 2:
-        bot.send_message(message.chat.id, "❌ Для скрещивания ДНК нужно иметь хотя бы 2 особи в списке!")
+        bot.send_message(message.chat.id, "❌ Нужны хотя бы 2 особи в списке!")
         return
     
     breeding_sessions[uid] = {"parent1": None}
     markup = types.InlineKeyboardMarkup()
     for u in players[uid]["colony"]:
         markup.add(types.InlineKeyboardButton(f"🧬 {u['name']}", callback_data=f"lab1_{u['id']}"))
-    bot.send_message(message.chat.id, "🧬 **Выберите первую родительскую особь для скрещивания генов:**", reply_markup=markup)
+    bot.send_message(message.chat.id, "🧬 **Выберите первого родителя для скрещивания ДНК:**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lab1_"))
 def lab1_callback(call):
@@ -161,7 +175,7 @@ def lab1_callback(call):
     for u in players[uid]["colony"]:
         if u["id"] != p1_id:
             markup.add(types.InlineKeyboardButton(f"🧬 {u['name']}", callback_data=f"lab2_{u['id']}"))
-    bot.edit_message_text("🧬 **Выберите вторую особь для синтеза ДНК:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    bot.edit_message_text("🧬 **Выберите второго родителя:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lab2_"))
 def lab2_callback(call):
@@ -171,35 +185,111 @@ def lab2_callback(call):
     
     u1 = next((u for u in players[uid]["colony"] if u["id"] == p1_id), None)
     u2 = next((u for u in players[uid]["colony"] if u["id"] == p2_id), None)
-    
     if not u1 or not u2: return
     
-    # Создание мутанта
     new_stats = {}
     all_keys = set(u1["stats"].keys()).union(u2["stats"].keys())
     for k in all_keys:
         v1 = u1["stats"].get(k, 20)
         v2 = u2["stats"].get(k, 20)
-        new_stats[k] = int((v1 + v2) * 0.6) + random.randint(5, 15) # Скрещивание + бонус мутации
+        new_stats[k] = int((v1 + v2) * 0.6) + random.randint(5, 15)
         
-    mutant = {
-        "id": str(uuid.uuid4())[:8],
-        "name": f"🧪 Мутант-{u1['name'].split('-')[-1]}",
-        "desc": "Сверхживучий результат генной инженерии улья.",
-        "stats": new_stats
-    }
-    
+    mutant = {"id": str(uuid.uuid4())[:8], "name": f"🧪 Мутант-{u1['name'].split('-')[-1]}", "desc": "Результат генной инженерии.", "stats": new_stats}
     players[uid]["colony"].remove(u1)
     players[uid]["colony"].remove(u2)
     players[uid]["colony"].append(mutant)
     
-    bot.edit_message_text(
-        f"🎉 **Генетический синтез завершен!**\nРодители исчезли в инкубаторе, но на свет появился супер-организм:\n\n"
-        f"**{mutant['name']}**\n📊 Новые параметры:\n`{format_stats(mutant['stats'])}`",
-        call.message.chat.id, call.message.message_id, parse_mode="Markdown"
-    )
+    bot.edit_message_text(f"🎉 **Синтез завершен!** Выведен супер-организм:\n\n**{mutant['name']}**\n📊 Характеристики:\n`{format_stats(mutant['stats'])}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# ==================== ОСТАЛЬНЫЕ КНОПКИ ====================
+# ==================== НОВАЯ СИСТЕМА: PvP БИТВЫ ====================
+@bot.message_handler(func=lambda msg: msg.text == "🏟️ PvP Битвы Арены")
+def pvp_menu(message):
+    uid = message.from_user.id
+    init_player(uid, message.from_user.first_name)
+    
+    if uid in pvp_lobby:
+        bot.send_message(message.chat.id, "🏟️ Ваша особь уже ожидает противника на Арене!")
+        return
+        
+    if not players[uid]["colony"]:
+        bot.send_message(message.chat.id, "❌ У вас нет насекомых, чтобы отправить бойца на Арену!")
+        return
+        
+    if players[uid]["biomass"] < 50:
+        bot.send_message(message.chat.id, "❌ Для участия в PvP нужно иметь минимум 50 биомассы (входная ставка).")
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    for unit in players[uid]["colony"]:
+        markup.add(types.InlineKeyboardButton(f"🤺 {unit['name']} (Сила: {unit['stats'].get('⚔️ Сила', 15)})", callback_data=f"pvp_select_{unit['id']}"))
+    
+    bot.send_message(message.chat.id, "🏟️ **Добро пожаловать на Гладиаторскую Арену Улья!**\n\nВыберите насекомое, которое представит вашу колонию. Ставка: `50` биомассы.\n⚠️ *Внимание:* Проигравший теряет своего бойца навсегда!", parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("pvp_select_"))
+def pvp_select_callback(call):
+    uid = call.from_user.id
+    unit_id = call.data.replace("pvp_select_", "")
+    
+    unit = next((u for u in players[uid]["colony"] if u["id"] == unit_id), None)
+    if not unit: return
+    
+    # Если в лобби уже кто-то есть и это не сам игрок
+    if pvp_lobby and list(pvp_lobby.keys())[0] != uid:
+        opponent_id = list(pvp_lobby.keys())[0]
+        opp_unit_id = pvp_lobby[opponent_id]
+        
+        opp_unit = next((u for u in players[opponent_id]["colony"] if u["id"] == opp_unit_id), None)
+        
+        if not opp_unit:
+            # Если боец оппонента пропал/был удален
+            del pvp_lobby[opponent_id]
+            pvp_lobby[uid] = unit_id
+            bot.edit_message_text("🏟️ Вы встали в очередь. Ожидайте противника...", call.message.chat.id, call.message.message_id)
+            return
+
+        # Проведение битвы!
+        del pvp_lobby[opponent_id]
+        bot.edit_message_text("⚔️ **Противник найден! Битва началась...**", call.message.chat.id, call.message.message_id)
+        
+        # Расчет боевой мощи (Сила + Защита)
+        power1 = unit["stats"].get("⚔️ Сила", 10) + unit["stats"].get("🛡️ Защита", 10)
+        power2 = opp_unit["stats"].get("⚔️ Сила", 10) + opp_unit["stats"].get("🛡️ Защита", 10)
+        
+        total_power = power1 + power2
+        chance1 = (power1 / total_power) * 100
+        
+        # Определение победителя
+        if random.randint(1, 100) <= chance1:
+            winner_id, winner_name, winner_unit = uid, players[uid]["username"], unit
+            loser_id, loser_name, loser_unit = opponent_id, players[opponent_id]["username"], opp_unit
+        else:
+            winner_id, winner_name, winner_unit = opponent_id, players[opponent_id]["username"], opp_unit
+            loser_id, loser_name, loser_unit = uid, players[uid]["username"], unit
+
+        # Применение результатов
+        players[winner_id]["biomass"] += 50
+        players[loser_id]["biomass"] = max(0, players[loser_id]["biomass"] - 50)
+        players[loser_id]["colony"].remove(loser_unit)
+        
+        # Отправка сообщений обоим
+        result_text = (
+            f"🏟️ **РЕЗУЛЬТАТЫ БИТВЫ НА АРЕНЕ**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"👑 **Победитель:** {winner_name} со своим боевым *{winner_unit['name']}*!\n"
+            f"💰 Выигрыш: `+50` биомассы.\n\n"
+            f"💀 **Проигравший:** {loser_name}.\n"
+            f"❌ Потери: `-50` биомассы и боец *{loser_unit['name']}* погиб в бою."
+        )
+        
+        bot.send_message(winner_id, f"🎉 **Вы победили в PvP!**\n\n{result_text}", parse_mode="Markdown")
+        try: bot.send_message(loser_id, f"💔 **Вы проиграли в PvP!**\n\n{result_text}", parse_mode="Markdown")
+        except Exception: pass
+        
+    else:
+        # Встаем в очередь
+        pvp_lobby[uid] = unit_id
+        bot.edit_message_text("🏟️ Ваш боец отправлен на Арену. Ожидаем вызова от другой колонии...", call.message.chat.id, call.message.message_id)
+
+# ==================== МАГАЗИН И УПРАВЛЕНИЕ (АДМИН) ====================
 @bot.message_handler(func=lambda msg: msg.text == "🛍️ Магазин Улья")
 def store_menu(message):
     markup = types.InlineKeyboardMarkup()
@@ -219,18 +309,51 @@ def buy_callback(call):
     players[uid]["colony"].append(unit)
     bot.send_message(call.message.chat.id, f"🛒 Новый кокон доставлен! Вывелась особь: **{unit['name']}**", parse_mode="Markdown")
 
-# ==================== АДМИН-КНОПКА ====================
 @bot.message_handler(func=lambda msg: msg.text == "👑 Управление Ульем" and msg.from_user.id == ADMIN_ID)
 def admin_cmd(message):
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔋 Дать себе +500 биомассы", callback_data="adm_give"))
-    bot.send_message(message.chat.id, "👑 **Приветствуем, Королева роя!** Настройки экосистемы:", reply_markup=markup)
+    markup.row(types.InlineKeyboardButton("📋 Все участники и ID", callback_data="adm_list_users"))
+    markup.row(types.InlineKeyboardButton("🔋 Начислить биомассу игроку", callback_data="adm_give_other"))
+    bot.send_message(message.chat.id, "👑 **Центральный Пульт Королевы Улья**", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data == "adm_give" and call.from_user.id == ADMIN_ID)
-def adm_give_callback(call):
-    uid = call.from_user.id
-    players[uid]["biomass"] += 500
-    bot.answer_callback_query(call.id, "Ресурсы успешно синтезированы!", show_alert=True)
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_") and call.from_user.id == ADMIN_ID)
+def admin_callbacks(call):
+    action = call.data.replace("adm_", "")
+    if action == "list_users":
+        if not players:
+            bot.send_message(call.message.chat.id, "🐜 В улье пока нет зарегистрированных особей.")
+            return
+        user_list = "📋 **Список всех колоний в улье:**\n━━━━━━━━━━━━━━━━━━━━\n"
+        for uid, data in players.items():
+            user_list += f"👤 Имя: *{data['username']}*\n🆔 Telegram ID: `{uid}`\n🔋 Биомасса: `{data['biomass']}` ед.\n🐜 Особей: {len(data['colony'])} шт.\n━━━━━━━━━━━━━━━━━━━━\n"
+        bot.send_message(call.message.chat.id, user_list, parse_mode="Markdown")
+    elif action == "give_other":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        msg = bot.send_message(call.message.chat.id, "🆔 Введите **Telegram ID** игрока для начисления ресурсов:")
+        bot.register_next_step_handler(msg, process_admin_target_id)
+
+def process_admin_target_id(message):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        target_id = int(message.text.strip())
+        if target_id not in players:
+            bot.send_message(message.chat.id, "❌ Данный ID не зарегистрирован.")
+            return
+        msg = bot.send_message(message.chat.id, f"Укажите количество биомассы для *{players[target_id]['username']}*:", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_gift_amount, target_id)
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Некорректный ID.")
+
+def process_admin_gift_amount(message, target_id):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        amount = int(message.text.strip())
+        players[target_id]["biomass"] += amount
+        bot.send_message(message.chat.id, f"✅ Начислено `+{amount}` биомассы игроку *{players[target_id]['username']}*!", parse_mode="Markdown")
+        try: bot.send_message(target_id, f"👑 **Милость Королевы!** Получено `+{amount}` биомассы!", parse_mode="Markdown")
+        except Exception: pass
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Неверное число.")
 
 if __name__ == '__main__':
     bot.infinity_polling()
