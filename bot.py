@@ -11,39 +11,39 @@ from bson.objectid import ObjectId
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# ==================== ТАБЛИЦА РЕДКОСТЕЙ С ХАРАКТЕРИСТИКАМИ ====================
+# ==================== ОБНОВЛЕННАЯ ТАБЛИЦА РЕДКОСТЕЙ ====================
 REAL_CARDS_POOL = {
     "⚪ Обычная": [
-        {"file": "5.jpg", "name": "Солнечный Самурай ☀️", "price": 2, "hp": 65, "atk": 13, "def": 5},
-        {"file": "6.jpg", "name": "Таинственный Лось 🦌", "price": 3, "hp": 75, "atk": 14, "def": 6}
+        {"file": "5.jpg", "name": "Солнечный Самурай ☀️", "price": 2, "hp": 65, "atk": 13, "def": 5}
     ],
     "🟢 Необычная": [
-        {"file": "9.jpg", "name": "Страж Дубравы 🌲", "price": 5, "hp": 90, "atk": 18, "def": 8}
+        {"file": "6.jpg", "name": "Таинственный Лось 🦌", "price": 4, "hp": 75, "atk": 15, "def": 6},
+        {"file": "9.jpg", "name": "Страж Дубравы 🌲", "price": 6, "hp": 90, "atk": 18, "def": 8}
     ],
     "🔵 Редкая": [
-        {"file": "4.jpg", "name": "Меха-Бык 🐂", "price": 10, "hp": 110, "atk": 24, "def": 12},
-        {"file": "7.jpg", "name": "Призрак Леса 👻", "price": 12, "hp": 105, "atk": 26, "def": 11}
+        {"file": "4.jpg", "name": "Меха-Бык 🐂", "price": 12, "hp": 110, "atk": 24, "def": 12}
     ],
     "🟣 Эпическая": [
-        {"file": "8.jpg", "name": "Лесной Хакер 💻", "price": 20, "hp": 145, "atk": 32, "def": 15}
+        {"file": "7.jpg", "name": "Призрак Леса 👻", "price": 18, "hp": 125, "atk": 28, "def": 13}
     ],
     "🟠 Легендарная": [
-        {"file": "2.jpg", "name": "👻losnya🐂🌲", "price": 35, "hp": 200, "atk": 42, "def": 20}
+        {"file": "8.jpg", "name": "Лесной Хакер 💻", "price": 30, "hp": 155, "atk": 35, "def": 16}
     ],
     "🔴 Мифическая": [
-        {"file": "3.jpg", "name": "Дониёр 🌲", "price": 55, "hp": 270, "atk": 55, "def": 26}
+        {"file": "2.jpg", "name": "👻losnya🐂🌲", "price": 50, "hp": 210, "atk": 45, "def": 22}
     ],
     "✨ Древняя": [
-        {"file": "1.jpg", "name": "金 sunny🌲 김지ха | DA 🐂", "price": 90, "hp": 390, "atk": 72, "def": 36}
+        {"file": "3.jpg", "name": "Дониёр 🌲", "price": 85, "hp": 290, "atk": 58, "def": 28}
     ],
     "💎 Секретная": [
-        {"file": "10.jpg", "name": "𝒎𝒐𝒐𝒏🌳", "price": 150, "hp": 500, "atk": 92, "def": 48}
+        {"file": "1.jpg", "name": "金 sunny🌲 김지ха | DA 🐂", "price": 140, "hp": 410, "atk": 75, "def": 38}
     ],
     "🌟 Божественная": [
-        {"file": "10.jpg", "name": "Божественный Аспект Муравья 👑", "price": 300, "hp": 720, "atk": 135, "def": 62}
+        {"file": "10.jpg", "name": "𝒎𝒐𝒐𝒏🌳", "price": 250, "hp": 550, "atk": 100, "def": 52}
     ],
     "👑 Эксклюзивная": [
-        {"file": "1.jpg", "name": "👑 Абсолютный Оверлорд Колонии", "price": 1000, "hp": 1150, "atk": 200, "def": 95}
+        {"file": "10.jpg", "name": "Божественный Аспект Муравья 👑", "price": 500, "hp": 800, "atk": 150, "def": 70},
+        {"file": "1.jpg", "name": "👑 Абсолютный Оверлорд Колонии", "price": 1200, "hp": 1200, "atk": 220, "def": 100}
     ]
 }
 
@@ -94,7 +94,7 @@ client = MongoClient(MONGO_URI)
 db = client["cards_bot_database"]
 users_col = db["users"]
 collections_col = db["collections"]
-promo_col = db["promocodes"] # Новая коллекция для промокодов
+promo_col = db["promocodes"]
 
 battle_sessions = {} 
 
@@ -160,7 +160,6 @@ def add_card_to_db(user_id, card):
 def get_upgrade_cost(current_level):
     return int(150 * (current_level ** 1.8))
 
-# Инициализация промокода в БД, если его еще нет
 def init_promo_db():
     if not promo_col.find_one({"code": "cosmo"}):
         promo_col.insert_one({
@@ -182,7 +181,7 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     COOLDOWNS[user_id] = current_time
     
     rarities = ["🗑️ Пустышка", "⚪ Обычная", "🟢 Необычная", "🔵 Редкая", "🟣 Эпическая", "🟠 Легендарная", "🔴 Мифическая", "✨ Древняя", "💎 Секретная", "🌟 Божественная", "👑 Эксклюзивная"]
-    weights = [55.0, 35.0, 25.0, 15.0, 10.0, 5.0, 3.0, 1.0, 0.8, 0.5, 0.01]
+    weights = [50.0, 35.0, 25.0, 15.0, 10.0, 5.0, 3.0, 1.5, 0.8, 0.4, 0.05] # Слегка скорректированные веса для баланса
     
     chosen_rarity = random.choices(rarities, weights=weights, k=1)[0]
     users_col.update_one({"user_id": user_id}, {"$inc": {"packs_opened": 1}})
@@ -282,7 +281,7 @@ async def upgrade_and_craft_main_handler(update: Update, context: ContextTypes.D
 async def lucky_and_quests_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🎲 *ИГРОВАЯ ЗОНА И ИСПЫТАНИЯ* 📜\n\n"
-        "⚠️ *Внимание:* На Косело Фортуны и Арену установлен жесткий кулдаун в **2 минуты**!"
+        "⚠️ *Внимание:* На Колесо Фортуны и Арену установлен жесткий кулдаун в **2 минуты**!"
     )
     kb = [
         [InlineKeyboardButton("🎡 Колесо Фортуны", callback_data="menu_wheel"),
@@ -304,11 +303,10 @@ async def bonuses_main_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     kb = [
         [InlineKeyboardButton("🏦 Муравьиный Банк", callback_data="menu_bank"),
          InlineKeyboardButton("🎨 Кастомизация", callback_data="menu_themes_list")],
-        [InlineKeyboardButton("🎟️ Активировать промокод", callback_data="menu_promo_hub")], # Добавили хаб промокодов
+        [InlineKeyboardButton("🎟️ Активировать промокод", callback_data="menu_promo_hub")],
         [InlineKeyboardButton("💎 донат тут", url="https://t.me/davit2010yt")]
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
 
 # ==================== ЦЕНТРАЛЬНЫЙ CALLBACK-ОБРАБОТЧИК ====================
 async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,17 +333,14 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("❌ Промокод не настроен в базе данных.")
             return
 
-        # Проверка 1: Использовал ли этот человек код ранее
         if user_id in promo.get("users_activated", []):
             await query.message.reply_text("⚠️ *ПРЕДУПРЕЖДЕНИЕ:* Вы уже активировали промокод `cosmo`! Повторное использование невозможно.", parse_mode="Markdown")
             return
 
-        # Проверка 2: Лимит активаций на весь бот (25 раз)
         if promo.get("uses", 0) >= promo.get("max_uses", 25):
             await query.message.reply_text("⚠️ *ПРЕДУПРЕЖДЕНИЕ:* Лимит активаций промокода `cosmo` (25/25) полностью исчерпан! Вы не успели.", parse_mode="Markdown")
             return
 
-        # Активация: Начисляем монеты и добавляем титул в список игрока
         users_col.update_one(
             {"user_id": user_id},
             {
@@ -354,7 +349,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             }
         )
 
-        # Обновляем глобальный счетчик использований в таблице промокодов
         promo_col.update_one(
             {"code": "cosmo"},
             {
@@ -755,7 +749,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ==================== ЗАПУСК БОТА ====================
 def main():
-    init_promo_db() # Подгружаем промокод перед стартом
+    init_promo_db()
     threading.Thread(target=run_health_server, daemon=True).start()
     application = Application.builder().token(TOKEN).build()
 
