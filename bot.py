@@ -5,8 +5,8 @@ import random
 import time
 from pymongo import MongoClient
 
-# 🔑 Данные доступа
-TOKEN = "8930026163:AAGXKa6jYNtPVZ2kTYTpuN2UtlY8ZKxJKWQ"
+# 🔑 Обновленный токен доступа
+TOKEN = "8930026163:AAG_lYDdSYPabdgHfRL0vLHshUSv0UcowWs"
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
@@ -19,14 +19,13 @@ try:
     print("✅ Успешное подключение к MongoDB Atlas!")
 except Exception as e:
     print(f"❌ Ошибка подключения к MongoDB: {e}")
-    # Фолбэк на оперативную память, если база не подключена (для тестов)
     players_col = None
 
-# Временные сессии для боев и крафта (в БД их хранить не обязательно)
+# Временные сессии для боев и крафта
 breeding_sessions = {}  
 pvp_lobby = {}         # Очередь: {uid: {"unit_id": id, "time": timestamp}}
-active_battles = {}    # PvP бои в процессе: {battle_id: {...}}
-pve_battles = {}       # Походы в процессе: {uid: {...}}
+active_battles = {}    # PvP бои в процессе
+pve_battles = {}       # Походы в процессе
 
 COCON_PRICE = 50  
 EXPEDITION_COOLDOWN = 600  
@@ -88,7 +87,7 @@ def start_cmd(message):
     get_player(uid, message.from_user.first_name)
     bot.send_message(
         message.chat.id, 
-        f"🐜 **Приветствуем в RPG Симуляторе Колонии!**\n\nВсе ваши данные теперь надежно защищены в MongoDB.", 
+        f"🐜 **Приветствуем в обновленном Симуляторе Колонии!**\n\nНовый токен применен, данные сохраняются в MongoDB Atlas. Наш рой готов к труду и обороне!", 
         reply_markup=main_keyboard(uid)
     )
 
@@ -123,7 +122,6 @@ def collection_cmd(message):
     uid = message.from_user.id
     p = get_player(uid, message.from_user.first_name)
     
-    # 🕒 ЗАЩИТА И ПРОВЕРКА ОЧЕРЕДИ PVP (2 МИНУТЫ ТАЙМАУТ)
     current_time = time.time()
     if uid in pvp_lobby and (current_time - pvp_lobby[uid]["time"] > 120):
         del pvp_lobby[uid]
@@ -152,7 +150,7 @@ def release_callback(call):
         bot.answer_callback_query(call.id, f"Успешно! Получено +{reward} биомассы.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-# ==================== ЭКСПЕДИЦИИ (PVE) С СИСТЕМОЙ БОЯ ====================
+# ==================== ЭКСПЕДИЦИИ С СИСТЕМОЙ БОЯ ====================
 @bot.message_handler(func=lambda msg: msg.text == "⚔️ Экспедиции (Походы)")
 def expedition_cmd(message):
     uid = message.from_user.id
@@ -170,7 +168,6 @@ def expedition_cmd(message):
     p["last_expedition"] = current_time
     save_player(uid, p)
 
-    # Встреча с врагом
     enemy = random.choice(ENEMIES).copy()
     pve_battles[uid] = {
         "enemy": enemy,
@@ -205,12 +202,10 @@ def pve_callback(call):
     battle = pve_battles[uid]
     
     if action == "run":
-        # Механика побега
-        if random.randint(1, 100) <= 40: # 40% шанс успешного побега
+        if random.randint(1, 100) <= 40:
             bot.edit_message_text("🏃‍♂️ Рой успешно применил защитные феромоны и скрылся без потерь!", call.message.chat.id, call.message.message_id)
             del pve_battles[uid]
         else:
-            # Неудачный побег — гибель случайных особей
             loss_count = random.randint(1, len(p["colony"]))
             lost_names = []
             for _ in range(loss_count):
@@ -223,12 +218,10 @@ def pve_callback(call):
             del pve_battles[uid]
         return
 
-    # Раунд боя
     enemy_dmg = battle["enemy"]["dmg"]
     if action == "block":
-        enemy_dmg = int(enemy_dmg * 0.3) # Блокирование снижает урон на 70%
+        enemy_dmg = int(enemy_dmg * 0.3)
 
-    # Нанесение урона
     battle["enemy"]["hp"] -= random.randint(int(battle["squad_dmg"]*0.3), int(battle["squad_dmg"]*0.5))
     battle["squad_hp"] -= enemy_dmg
 
@@ -278,7 +271,6 @@ def pvp_select_callback(call):
     unit = next((u for u in p["colony"] if u["id"] == unit_id), None)
     if not unit: return
     
-    # Поиск противника
     if pvp_lobby and list(pvp_lobby.keys())[0] != uid:
         opp_id = list(pvp_lobby.keys())[0]
         opp_unit_id = pvp_lobby[opp_id]["unit_id"]
@@ -293,7 +285,6 @@ def pvp_select_callback(call):
             
         del pvp_lobby[opp_id]
         
-        # Создание сессии пошагового PvP боя
         b_id = str(uuid.uuid4())[:8]
         active_battles[b_id] = {
             "p1": uid, "p1_name": p["username"], "p1_unit": unit, "p1_hp": unit["stats"].get("🛡️ Защита", 100), "p1_act": None,
@@ -331,7 +322,6 @@ def pvp_turn_callback(call):
     
     bot.edit_message_text("⏳ Действие выбрано. Ожидание выбора соперника...", call.message.chat.id, call.message.message_id)
     
-    # Если оба походили, считаем результаты раунда
     if battle["p1_act"] and battle["p2_act"]:
         dmg1 = int(battle["p1_unit"]["stats"].get("⚔️ Сила", 20) * (0.3 if battle["p2_act"] == "block" else 1))
         dmg2 = int(battle["p2_unit"]["stats"].get("⚔️ Сила", 20) * (0.3 if battle["p1_act"] == "block" else 1))
@@ -339,9 +329,8 @@ def pvp_turn_callback(call):
         battle["p2_hp"] -= dmg1
         battle["p1_hp"] -= dmg2
         
-        battle["p1_act"], battle["p2_act"] = None, None # сброс ходов
+        battle["p1_act"], battle["p2_act"] = None, None
         
-        # Проверка финала
         if battle["p1_hp"] <= 0 or battle["p2_hp"] <= 0:
             winner, loser = (battle["p1"], battle["p2"]) if battle["p1_hp"] > battle["p2_hp"] else (battle["p2"], battle["p1"])
             w_p, l_p = get_player(winner), get_player(loser)
@@ -351,7 +340,6 @@ def pvp_turn_callback(call):
             w_p["biomass"] += 50
             l_p["biomass"] = max(0, l_p["biomass"] - 50)
             
-            # Удаляем погибшего бойца у проигравшего
             l_p["colony"] = [u for u in l_p["colony"] if u["id"] != l_unit["id"]]
             
             save_player(winner, w_p)
@@ -363,7 +351,7 @@ def pvp_turn_callback(call):
         else:
             send_pvp_controls(b_id)
 
-# (Остальной системный код для Магазина, Лаборатории генов и Админки переходит без изменений для экономии места)
+# ==================== СИСТЕМА КРАФТА И МАГАЗИН ====================
 @bot.message_handler(func=lambda msg: msg.text == "🧬 Лаборатория Генов")
 def lab_cmd(message):
     uid = message.from_user.id
@@ -430,6 +418,7 @@ def buy_callback(call):
     save_player(uid, p)
     bot.send_message(call.message.chat.id, f"🛒 Вывелась особь: **{unit['name']}**")
 
+# ==================== АДМИН ПАНЕЛЬ ====================
 @bot.message_handler(func=lambda msg: msg.text == "👑 Управление Ульем" and msg.from_user.id == ADMIN_ID)
 def admin_cmd(message):
     markup = types.InlineKeyboardMarkup()
