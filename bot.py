@@ -53,7 +53,6 @@ def init_player(uid, name="Особь"):
             "spouse": None, 
             "username": name
         }
-    # Защита на случай, если имя сменилось в ТГ
     if players[uid]["username"] == "Особь" and name != "Особь":
         players[uid]["username"] = name
 
@@ -141,7 +140,7 @@ def sell_callback(call):
     card = next((c for c in players[uid]["inventory"] if c["id"] == cid), None)
     if card:
         payout = int(card["price"] * ECONOMY_BOOST)
-        if players[uid].get("spouse"): payout = int(payout * 1.1) # Бонус за брак +10%
+        if players[uid].get("spouse"): payout = int(payout * 1.1) 
         players[uid]["balance"] += payout
         players[uid]["inventory"].remove(card)
         bot.answer_callback_query(call.id, f"Сдано за {payout} монет!")
@@ -222,7 +221,7 @@ def market_menu(message):
         bot.send_message(message.chat.id, "🏪 **Рынок Улья**\n\nСейчас никто ничего не продает. Вы можете выставить карту на продажу через меню `📁 Коллекция`.")
         return
         
-    bot.send_message(message.chat.id, "🏪 **Актуальные лоты на Рынке Улья:**\nПокупайте редких особей у других игроков напрямую:")
+    bot.send_message(message.chat.id, "🏪 **Актуальные лоты на Рынке Улья:**")
     for lid, lot in list(market_lots.items()):
         seller = players.get(lot["seller_id"], {}).get("username", "Неизвестный")
         markup = types.InlineKeyboardMarkup()
@@ -246,7 +245,6 @@ def market_callback(call):
     init_player(uid, call.from_user.first_name)
     data = call.data.replace("mkt_", "")
     
-    # Подготовка продажи (выставление цены через команду)
     if data.startswith("pre_"):
         cid = data.replace("pre_", "")
         card = next((c for c in players[uid]["inventory"] if c["id"] == cid), None)
@@ -254,7 +252,6 @@ def market_callback(call):
         bot.send_message(call.message.chat.id, f"💡 Чтобы установить цену и выставить ** на рынок, введите команду:\n`/sell_market {cid} [Цена]`")
         bot.answer_callback_query(call.id)
         
-    # Покупка лота
     elif data.startswith("buy_"):
         lid = data.replace("buy_", "")
         lot = market_lots.get(lid)
@@ -265,19 +262,16 @@ def market_callback(call):
             bot.answer_callback_query(call.id, "❌ У вас недостаточно монет для покупки!", show_alert=True)
             return
             
-        # Процесс сделки
         players[uid]["balance"] -= lot["price"]
         players[lot["seller_id"]]["balance"] += lot["price"]
         players[uid]["inventory"].append(lot["card"])
         
-        # Уведомление продавцу
         try: bot.send_message(lot["seller_id"], f"💰 Вашу карту **{lot['card']['name']} купили на рынке за {lot['price']} монет!")
         except Exception: pass
         
         del market_lots[lid]
         bot.edit_message_text("🎉 Вы успешно приобрели особь с рынка улья!", call.message.chat.id, call.message.message_id)
 
-    # Отмена лота
     elif data.startswith("cancel_"):
         lid = data.replace("cancel_", "")
         lot = market_lots.get(lid)
@@ -308,7 +302,7 @@ def sell_market_cmd(message):
     players[uid]["inventory"].remove(card)
     bot.send_message(message.chat.id, f"✅ Карта ** выставлена на общий рынок за `{price}` монет!")
 
-# ==================== ИНТЕРАКТИВНЫЙ ЗАГС И КВЕСТЫ ====================
+# ==================== ИНТЕРАКТИВНЫЙ ЗАГС И БРАКИ ====================
 @bot.message_handler(func=lambda msg: msg.text == "🎲 ЗАГС & Квесты")
 def quests_menu(message):
     if not check_access(message): return
@@ -336,7 +330,6 @@ def marry_callback(call):
         if players[uid].get("spouse"):
             bot.answer_callback_query(call.id, "❌ Вы уже состоите в союзе!", show_alert=True)
             return
-        # Список свободных особей
         free_players = [pid for pid, p in players.items() if pid != uid and not p.get("spouse")]
         if not free_players:
             bot.answer_callback_query(call.id, "🐜 В улье пока нет других свободных особей.", show_alert=True)
