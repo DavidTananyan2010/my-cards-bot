@@ -3,7 +3,8 @@ from telebot import types
 import uuid
 import random
 
-TOKEN = "8701989939:AAHe0GFEeeSYXOEoVeE1kTQZ0cY71gXFLqI"
+# 🔑 Новый актуальный токен бота
+TOKEN = "8701989939:AAFVTHvkObrmq6EsQClsTByOEL7tJNqg4_Q"
 bot = telebot.TeleBot(TOKEN)
 
 # 👑 ID Главного Администратора (Королевы улья)
@@ -61,7 +62,7 @@ def main_keyboard():
     markup.row("📦 Открыть пак", "👤 Профиль | 🏆 Топ")
     markup.row("📁 Коллекция", "🚀 Прокачка & Крафт")
     markup.row("🛍️ Магазин", "🏪 Рынок Улья")
-    markup.row("🎁 Бонусы & Донат", "⚔️ Походы & Битвы") # 🎲 ЗАГС убран из главного меню
+    markup.row("🎁 Бонусы & Донат", "⚔️ Походы & Битвы")
     return markup
 
 # ==================== ОБЫЧНОЕ ИГРОВОЕ МЕНЮ ====================
