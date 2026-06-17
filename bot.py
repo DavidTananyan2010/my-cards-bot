@@ -11,7 +11,7 @@ bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
 # 🍃 ПОДКЛЮЧЕНИЕ К MONGODB (Вставьте вашу строку подключения сюда!)
-MONGO_URI = "ВАША_СТРОКА_ПОДКЛЮЧЕНИЯ_MONGODB" 
+MONGO_URI = ""
 try:
     client = MongoClient(MONGO_URI)
     db = client["colony_game_db"]
