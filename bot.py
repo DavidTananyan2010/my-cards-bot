@@ -103,7 +103,7 @@ def start_cmd(message):
     else:
         msg_text += f"ℹ️ _Ваш Telegram ID: `{uid}` (Передайте его создателю для получения прав)_\n\n"
 
-    # 🔄 ИСПРАВЛЕНИЕ: Если игрок уже выбрал фракцию, просто перезагружаем кнопки меню
+    # 🔄 Если игрок уже выбрал фракцию, перезагружаем кнопки меню
     if players[uid]["faction"] is not None:
         bot.send_message(
             message.chat.id, 
@@ -160,7 +160,10 @@ def faction_callback(call):
 def nest_menu(message):
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
-    if players[uid]["faction"] is None: return
+    
+    if players[uid]["faction"] is None or players[uid]["race"] is None:
+        bot.send_message(message.chat.id, "⚠️ Ваши данные улья не найдены или были сброшены из-за перезапуска сервера. Пожалуйста, введите /start, чтобы обновить профиль.")
+        return
 
     race = players[uid]["race"]
     hive = GLOBAL_HIVES[race]
@@ -190,7 +193,10 @@ def nest_menu(message):
 def incubator_menu(message):
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
-    if players[uid]["faction"] is None: return
+    
+    if players[uid]["faction"] is None or players[uid]["race"] is None:
+        bot.send_message(message.chat.id, "⚠️ Данные не найдены. Пожалуйста, введите /start")
+        return
 
     race = players[uid]["race"]
     hive = GLOBAL_HIVES[race]
@@ -215,6 +221,11 @@ def incubator_menu(message):
 def incubator_callback(call):
     uid = call.from_user.id
     init_player(uid, call.from_user.first_name)
+    
+    if players[uid]["race"] is None:
+        bot.answer_callback_query(call.id, "⚠️ Данные устарели, введите /start", show_alert=True)
+        return
+        
     race = players[uid]["race"]
     hive = GLOBAL_HIVES[race]
     
@@ -248,14 +259,17 @@ def incubator_callback(call):
         bot.answer_callback_query(call.id, "Вылупление завершено!")
         bot.edit_message_text(f"🎉 {msg}\n\nОсталось яиц в инкубаторе: {hive['eggs']} шт.", call.message.chat.id, call.message.message_id)
 
-# Сбор ресурсов с ФИЗИКОЙ ВЕСА
+# Сбор ресурсов с ФИЗИКОЙ ВЕСА и защитой от перезапусков
 @bot.message_handler(func=lambda msg: msg.text == "🌾 Добыча для Улья")
 def collect_resources(message):
     uid = message.from_user.id
     init_player(uid, message.from_user.first_name)
-    if players[uid]["faction"] is None: return
-
+    
     p = players[uid]
+    if p["faction"] is None or p["race"] is None:
+        bot.send_message(message.chat.id, "⚠️ Сервер обновился, и ваш сеанс истек. Пожалуйста, нажмите /start, чтобы заново активировать игровое меню.")
+        return
+
     race = p["race"]
     hive = GLOBAL_HIVES[race]
     
@@ -265,200 +279,4 @@ def collect_resources(message):
             "В вашей колонии ещё **нет вылупившихся рабочих**!\n"
             "Матка — самое крупное насекомое, она невероятно медлительна "
             "и не способна выйти на поверхность самостоятельно.\n\n"
-            "👉 Срочно откройте вкладку **🥚 Инкубатор Расы** и выведите хотя бы 1 рабочего!"
-        )
-        bot.send_message(message.chat.id, error_txt, parse_mode="Markdown")
-        return
-
-    now = time.time()
-    if now - p["last_collect"] < 15:
-        remains = int(15 - (now - p["last_collect']))
-        bot.send_message(message.chat.id, f"⏳ Ваши рабочие ещё тащат прошлый груз. Подождите {remains} сек.")
-        return
-
-    loot_objects = [
-        {"name": "дохлую гусеницу 🐛", "weight": 80},
-        {"name": "крупную каплю нектара 💧", "weight": 40},
-        {"name": "сочную травинку 🌱", "weight": 25},
-        {"name": "кусок спелого яблока 🍏", "weight": 150}
-    ]
-    found = random.choice(loot_objects)
-    max_carry_power = hive["workers"] * 15
-    
-    if max_carry_power >= found["weight"]:
-        gained_biomass = round(found["weight"] / 4, 1)
-        hive["biomass"] = round(hive["biomass"] + gained_biomass, 1)
-        p["personal_contribution"] += gained_biomass
-        msg = f"💪 **Сила физики!** Ваши рабочие нашли {found['name']} весом `{found['weight']} мг` и успешно дотащили её до склада! Общая казна улья пополнена на `+{gained_biomass}` ед. биомассы."
-    else:
-        partial_loot = round(max_carry_power / 5, 1)
-        hive["biomass"] = round(hive["biomass"] + partial_loot, 1)
-        p["personal_contribution"] += partial_loot
-        msg = f"😰 **Слишком тяжело!** Ваши рабочие нашли {found['name']} весом `{found['weight']} мг`. Из-за законов физики и нехватки сил они смогли отгрызть лишь кусочек на `+{partial_loot}` биомассы. Нужно больше рабочих!"
-
-    p["last_collect"] = now
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-
-# Военные походы
-@bot.message_handler(func=lambda msg: msg.text == "⚔️ Военный Поход")
-def battle_system(message):
-    uid = message.from_user.id
-    init_player(uid, message.from_user.first_name)
-    if players[uid]["faction"] is None: return
-
-    race = players[uid]["race"]
-    hive = GLOBAL_HIVES[race]
-    enemy = random.choice(ENEMIES)
-    
-    bot.send_message(message.chat.id, f"🧭 Боевой отряд столкнулся с хищником: **{enemy['name']}** (Сила: {enemy['power']})")
-    time.sleep(1.5)
-
-    using_queen = False
-    if hive["soldiers"] == 0:
-        using_queen = True
-        player_power = 25 + random.randint(-5, 5)
-        bot.send_message(message.chat.id, "⚠️ **Солдат нет!** В бой вступает сама Матка-Королева. Она невероятно сильна и яростно защищает кладку!")
-    else:
-        player_power = hive["soldiers"] * 5 + random.randint(0, 5)
-
-    if player_power >= enemy["power"]:
-        hive["biomass"] = round(hive["biomass"] + enemy["loot"], 1)
-        loss_text = ""
-        if not using_queen:
-            if hive["soldiers"] > 0:
-                hive["soldiers"] -= 1
-                loss_text = "\n💀 1 отважный солдат погиб, сдерживая натиск."
-        else:
-            loss_text = "\n👑 Матка победила, но сильно устала."
-            
-        bot.send_message(message.chat.id, f"🏆 **Победа!**\nВраг повержен. Улей забирает ресурсы: `+{enemy['loot']}` биомассы.{loss_text}", parse_mode="Markdown")
-    else:
-        if not using_queen:
-            lost_soldiers = min(hive["soldiers"], random.randint(1, 3))
-            hive["soldiers"] -= lost_soldiers
-            bot.send_message(message.chat.id, f"💔 **Отряд разбит.** Мы потеряли `-{lost_soldiers}` солдат.")
-        else:
-            stolen = min(hive["biomass"], enemy["loot"] * 2)
-            hive["biomass"] = round(hive["biomass"] - stolen, 1)
-            bot.send_message(message.chat.id, f"💥 **Тяжёлое поражение!**\nМатка слишком медлительна. Хищник прорвался в кладовые и утащил `-{stolen}` биомассы!", parse_mode="Markdown")
-
-# ==================== АДМИН ПАНЕЛЬ ====================
-
-@bot.message_handler(commands=['users_list'])
-def users_list_cmd(message):
-    if message.from_user.id != ADMIN_ID: 
-        bot.send_message(message.chat.id, f"❌ У вас нет прав Создателя. Ваш ID: `{message.from_user.id}`", parse_mode="Markdown")
-        return
-    if not players:
-        bot.send_message(message.chat.id, "📭 В ульях пусто. Никто еще не зарегистрировался.")
-        return
-        
-    list_txt = "📋 **УЧАСТНИКИ ВСЕХ ГЛОБАЛЬНЫХ РАС:**\n━━━━━━━━━━━━━━━━━━━━\n"
-    for num, (uid, data) in enumerate(players.items(), 1):
-        race_info = data['race'] if data['race'] else "Выбирает фракцию"
-        list_txt += f"{num}. 👤 **{data['username']}**\n   🆔 ID: `{uid}`\n   🧬 Глобальная раса: _{race_info}_\n   📊 Личный вклад: `{data['personal_contribution']}`\n━━━━━━━━━━━━━━━━━━━━\n"
-        
-    bot.send_message(message.chat.id, list_txt, parse_mode="Markdown")
-
-@bot.message_handler(commands=['admin_players'])
-def admin_players_cmd(message):
-    if message.from_user.id != ADMIN_ID: 
-        bot.send_message(message.chat.id, f"❌ Доступ запрещен. Ваш ID: `{message.from_user.id}`", parse_mode="Markdown")
-        return
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("📊 Состояние Гнезд", callback_data="adm_stats"))
-    
-    bot.send_message(
-        message.chat.id, 
-        "🎛 **Панель Творца (Глобальные ульи)**\n\n"
-        "Админ-команды в чате:\n"
-        "`/givecoins [ID] [Количество]` — начислить биомассу улью\n"
-        "`/givetitle [ID] [Титул]` — выдать личный титул\n"
-        "`/users_list` — список игроков",
-        parse_mode="Markdown", reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
-def admin_callbacks(call):
-    if call.from_user.id != ADMIN_ID: 
-        bot.answer_callback_query(call.id, "❌ Вы не администратор!", show_alert=True)
-        return
-    action = call.data.replace("adm_", "")
-
-    if action == "stats":
-        txt = "📊 **Биологический мониторинг видов:**\n━━━━━━━━━━━━━━━━━━━━\n"
-        for name, data in GLOBAL_HIVES.items():
-            txt += f"🐜 **{name}**:\n💰 Биомасса: `{data['biomass']}` | Статус: `{data['status']}`\n🥚 Яйца: `{data['eggs']}` | 📦 Рабочие: `{data['workers']}` | ⚔️ Солдаты: `{data['soldiers']}`\n━━━━━━━━━━━━━━━━━━━━\n"
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Назад", callback_data="adm_back"))
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-        
-    elif action == "back":
-        admin_players_cmd(call.message)
-
-@bot.message_handler(func=lambda msg: msg.text and (msg.text.startswith('/givecoins') or msg.text.startswith('/givetitle')))
-def execute_admin_commands(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Вы не Творец этой экосистемы.")
-        return
-
-    parts = message.text.split(maxsplit=2)
-    cmd = parts[0].replace('/', '')
-    
-    if len(parts) < 3:
-        bot.send_message(message.chat.id, "❌ Неверный формат. Используйте пример:\n`/givecoins 7501899378 500`")
-        return
-        
-    try:
-        target_id = int(parts[1])
-        value_arg = parts[2]
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ ID должен быть числом.")
-        return
-
-    if target_id not in players:
-        bot.send_message(message.chat.id, "❌ Этот игрок еще не заходил в бота (ему нужно прописать /start).")
-        return
-        
-    race = players[target_id]["race"]
-
-    if cmd == "givecoins":
-        try: 
-            amount = float(value_arg)
-        except ValueError: 
-            bot.send_message(message.chat.id, "❌ Количество должно быть числом.")
-            return
-            
-        if race:
-            GLOBAL_HIVES[race]["biomass"] = round(GLOBAL_HIVES[race]["biomass"] + amount, 1)
-            bot.send_message(message.chat.id, f"✅ В улей **{race}** успешно добавлено `{amount}` биомассы!")
-        else:
-            bot.send_message(message.chat.id, "❌ Игрок найден, но он еще не выбрал свой улей.")
-        
-    elif cmd == "givetitle":
-        title_name = value_arg.strip()
-        if title_name not in players[target_id]["titles"]:
-            players[target_id]["titles"].append(title_name)
-            bot.send_message(message.chat.id, f"✅ Титул `[{title_name}]` успешно выдан игроку.")
-
-# ==================== HEALTH CHECK СЕРВЕР ====================
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"EcoSystem is Simulated!")
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
-
-if __name__ == '__main__':
-    if os.environ.get("RENDER") or os.environ.get("PORT"):
-        threading.Thread(target=run_health_server, daemon=True).start()
-    
-    print("Глобальный реалистичный бот запущен!")
-    bot.infinity_polling()
+            "👉 С
