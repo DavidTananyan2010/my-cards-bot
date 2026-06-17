@@ -4,6 +4,7 @@ import os
 import asyncio
 import time  # Для отслеживания времени кулдауна
 import threading  # Для фонового веб-сервера
+from datetime import datetime  # Новое: для работы с датой и временем регистрации
 from http.server import SimpleHTTPRequestHandler, HTTPServer # Для сервера
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -82,12 +83,23 @@ def run_health_server():
     httpd.serve_forever()
 
 # ==================== ФУНКЦИИ РАБОТЫ С БАЗОЙ ДАННЫХ ====================
-def register_user(user_id, first_name):
+def register_user(user_id, first_name, username=None):
+    # Добавляем сохранение username и даты регистрации joined_at
+    update_data = {"first_name": first_name}
+    if username:
+        update_data["username"] = username
+
     users_col.update_one(
         {"user_id": user_id},
         {
-            "$set": {"first_name": first_name},
-            "$setOnInsert": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}
+            "$set": update_data,
+            "$setOnInsert": {
+                "coins": 500, 
+                "packs_opened": 0, 
+                "active_title": "Нет титула", 
+                "owned_titles": ["Нет титула"],
+                "joined_at": datetime.utcnow().isoformat()  # Время первой регистрации в формате ISO
+            }
         },
         upsert=True
     )
@@ -125,12 +137,12 @@ def get_user_cards(user_id):
 # ==================== ОБРАБОТЧИКИ МЕНЮ ПОЛЬЗОВАТЕЛЯ ====================
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     await update.message.reply_text("Добро пожаловать в DAcards! Выберите действие в меню ниже:", reply_markup=get_main_keyboard())
 
 async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     
     current_time = time.time()
     if user_id in COOLDOWNS:
@@ -165,7 +177,7 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     coins, packs, title, _ = get_user_stats(user_id)
     
     profile_text = f"👤 *Профиль игрока {update.effective_user.first_name}*\nID: `{user_id}`\n🎖️ Титул: *{title}*\n🪙 Баланс: {coins} монеток\n📦 Открыто паков: {packs}\n"
@@ -182,7 +194,7 @@ async def top_players_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ==================== ЛОГИКА СТИЛЬНОЙ КОЛЛЕКЦИИ (УДАЛЕНИЕ НА ВЫБОР) ====================
 async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     raw_cards = get_user_cards(user_id)
     
     if not raw_cards:
@@ -205,7 +217,7 @@ async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==================== ИНТЕРАКТИВНЫЙ СБРОС ПРОГРЕССА (БЕЗОПАСНОСТЬ) ====================
 async def request_reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     
     kb = [
         [InlineKeyboardButton("✅ Да, сбросить всё", callback_data="confirm_full_reset"),
@@ -221,7 +233,7 @@ async def request_reset_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # ==================== СТРУКТУРИРОВАННЫЙ МАГАЗИН ====================
 async def open_shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.first_name)
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
     
     keyboard = [
         [InlineKeyboardButton("🎫 Магазин титулов", callback_data="menu_titles"),
@@ -229,7 +241,7 @@ async def open_shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("🛍️ *Главное меню Торгового Центра DAcards.*\nВыберите необходимый отдел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-# ==================== НОВЫЕ АДМИНИСТРАТИВНЫЕ КОМАНДЫ ====================
+# ==================== ОБНОВЛЕННЫЕ АДМИНИСТРАТИВНЫЕ КОМАНДЫ ====================
 async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -240,8 +252,40 @@ async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
         
     text = f"👥 *СПИСОК ВСЕХ ИГРОКОВ БОТА ({len(all_users)}):*\n\n"
+    
     for user in all_users:
-        text += f"• *{user.get('first_name', 'Игрок')}* | ID: `{user.get('user_id')}`\n  🪙 Монеты: {user.get('coins', 0)} | 🎖️ Титул: {user.get('active_title', 'Нет')}\n\n"
+        # Получаем юзернейм или пишем, что его нет
+        username_val = user.get("username")
+        username_text = f"@{username_val}" if username_val else "нет @username"
+        
+        # Вычисляем время пребывания в боте
+        joined_at_str = user.get("joined_at")
+        time_spent_text = "Неизвестно (зашел до обновления)"
+        
+        if joined_at_str:
+            try:
+                joined_at_dt = datetime.fromisoformat(joined_at_str)
+                delta = datetime.utcnow() - joined_at_dt
+                
+                days = delta.days
+                hours = delta.seconds // 3600
+                minutes = (delta.seconds % 3600) // 60
+                
+                # Красивое форматирование строки времени
+                time_parts = []
+                if days > 0: time_parts.append(f"{days} дн.")
+                if hours > 0: time_parts.append(f"{hours} ч.")
+                time_parts.append(f"{minutes} мин.")
+                time_spent_text = " ".join(time_parts)
+            except:
+                pass
+
+        text += (
+            f"• *{user.get('first_name', 'Игрок')}* | {username_text}\n"
+            f"  ID: `{user.get('user_id')}`\n"
+            f"  🪙 Монеты: {user.get('coins', 0)} | 🎖️ Титул: {user.get('active_title', 'Нет')}\n"
+            f"  ⏱️ В боте: `{time_spent_text}`\n\n"
+        )
         
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -305,7 +349,8 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("adm_reset_player_"):
         if user_id != ADMIN_ID: return
         target_uid = int(data.replace("adm_reset_player_", ""))
-        users_col.update_one({"user_id": target_uid}, {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}})
+        # При полном сбросе админом также обновляем дату на текущую
+        users_col.update_one({"user_id": target_uid}, {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"], "joined_at": datetime.utcnow().isoformat()}})
         collections_col.delete_many({"user_id": target_uid})
         await query.edit_message_text(f"💥 Полный сброс игрока `{target_uid}` выполнен!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm_back_to_list")]]) )
         return
@@ -321,7 +366,7 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "confirm_full_reset":
         users_col.update_one(
             {"user_id": user_id},
-            {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"]}}
+            {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"], "joined_at": datetime.utcnow().isoformat()}}
         )
         collections_col.delete_many({"user_id": user_id})
         await query.edit_message_text("♻️ *Ваш прогресс успешно аннулирован!*\nБаланс сброшен до 500 монет, коллекция полностью очищена.", parse_mode="Markdown")
@@ -482,7 +527,7 @@ def main():
     application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
     application.add_handler(MessageHandler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler))
     
-    # Регистрация новых админских команд
+    # Регистрация админских команд
     application.add_handler(CommandHandler("users_list", users_list_command))
     application.add_handler(CommandHandler("admin_players", admin_players_command))
     
