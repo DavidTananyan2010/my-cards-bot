@@ -13,7 +13,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Бот улья активен. Инлайн-экспедиции и новые враги добавлены!"
+    return "Бот улья активен. Кнопки обнуления добавлены!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -116,7 +116,7 @@ def start_cmd(message):
     get_player(uid, message.from_user.first_name)
     bot.send_message(
         message.chat.id, 
-        f"🐜 **Приветствуем в Симуляторе Колонии!**\nВыбирайте зоны экспедиций лично через новые инлайн-кнопки.", 
+        f"🐜 **Приветствуем в Симуляторе Колонии!**\nРазвивайте свой муравейник и побеждайте врагов.", 
         reply_markup=main_keyboard(uid)
     )
 
@@ -124,13 +124,57 @@ def start_cmd(message):
 def profile_cmd(message):
     uid = message.from_user.id
     p = get_player(uid, message.from_user.first_name)
+    
+    # Кнопка самообнуления внутри профиля
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔄 Сбросить весь прогресс", callback_data="player_self_reset_confirm"))
+    
     bot.send_message(
         message.chat.id, 
         f"🏰 **Муравейник особи {p['username']}:**\n\n"
         f"🔋 **Запас биомассы:** `{p['biomass']}` единиц\n"
         f"🐝 **Численность отряда:** {len(p['colony'])} насекомых",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=markup
     )
+
+# ==================== ИНТЕРФЕЙС ОБНУЛЕНИЯ ИГРОКА ====================
+@bot.callback_query_handler(func=lambda call: call.data == "player_self_reset_confirm")
+def self_reset_confirm(call):
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ ДА, удалить", callback_data="player_self_reset_execute"),
+        types.InlineKeyboardButton("❌ НЕТ, отмена", callback_data="player_self_reset_cancel")
+    )
+    bot.edit_message_text(
+        "⚠️ **Вы уверены, что хотите ПОЛНОСТЬЮ обнулить свой муравейник?**\n"
+        "Вся биомасса, муравьи и мутации исчезнут навсегда без возможности восстановления!", 
+        call.message.chat.id, 
+        call.message.message_id, 
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("player_self_reset_"))
+def self_reset_action(call):
+    uid = call.from_user.id
+    action = call.data.replace("player_self_reset_", "")
+    
+    if action == "cancel":
+        bot.edit_message_text("❌ Сброс прогресса отменен. Ваш улей в безопасности!", call.message.chat.id, call.message.message_id)
+        return
+        
+    if action == "execute":
+        uid_str = str(uid)
+        # Возвращаем к начальным значениям
+        LOCAL_DB[uid_str] = {
+            "_id": uid_str, 
+            "biomass": 500, 
+            "colony": [], 
+            "username": call.from_user.first_name, 
+            "last_expedition": 0
+        }
+        save_db(LOCAL_DB)
+        bot.edit_message_text("🔄 **Прогресс успешно стерт.** Ваша Королева начинает всё с чистого листа!", call.message.chat.id, call.message.message_id)
 
 # ==================== ИНЛАЙН ЭКСПОДИЦИИ И ВЫБОР ВРАГОВ ====================
 @bot.message_handler(func=lambda msg: msg.text == "⚔️ Экспедиции (Походы)")
@@ -148,7 +192,6 @@ def expedition_menu(message):
         bot.send_message(message.chat.id, f"⏳ Насекомые восстанавливают силы после похода. Ждать: {remains} сек.")
         return
 
-    # Создаем инлайн-меню выбора локации экспедиции
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("🍂 Стандартная вылазка", callback_data="exp_zone_standard"))
     markup.row(types.InlineKeyboardButton("🌲 Дремучая Чаща", callback_data="exp_zone_forest"))
@@ -168,7 +211,6 @@ def expedition_zone_callback(call):
     p = get_player(uid, call.from_user.first_name)
     current_time = time.time()
     
-    # Повторная проверка кулдауна при клике
     if current_time - p["last_expedition"] < EXPEDITION_COOLDOWN:
         bot.answer_callback_query(call.id, "⏳ Ваши муравьи еще не отдохнули!", show_alert=True)
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -177,7 +219,6 @@ def expedition_zone_callback(call):
     p["last_expedition"] = current_time
     save_player(uid, p)
 
-    # Выбираем врага в зависимости от нажатой кнопки
     if zone == "forest":
         enemy = random.choice(ENEMIES_FOREST).copy()
         zone_title = "🌲 Дремучая Чаща 🌲"
@@ -206,8 +247,7 @@ def show_pve_turn(chat_id, uid):
         f"🚨 **Замечен опасный противник!**\n\n"
         f"👹 **Враг:** {battle['enemy']['name']} (Здоровье: {battle['enemy']['hp']})\n"
         f"🛡️ **Защита вашего отряда:** {battle['squad_hp']}\n\n"
-        f"Ваш приказ отряду:", 
-        reply_markup=markup
+        f"Ваш приказ отряду:", reply_markup=markup
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("pve_"))
@@ -227,7 +267,6 @@ def pve_callback(call):
     battle["squad_hp"] -= enemy_dmg
 
     if battle["enemy"]["hp"] <= 0:
-        # В Чаще награда выше!
         loot = random.randint(150, 300) if "Чаща" in battle["zone"] else random.randint(100, 250)
         p["biomass"] += loot
         save_player(uid, p)
@@ -287,7 +326,7 @@ def release_callback(call):
         bot.answer_callback_query(call.id, f"Успешно! Получено +{reward} биомассы.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-@bot.message_handler(func=lambda msg: msg.text == "🛍️ Магазин Улья")
+@bot.message_handler(func=lambda msg: msg.text == "🛍️ Магазин Unья")
 def store_menu(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(f"🥚 Обычный кокон ({COCON_PRICE} 🔋)", callback_data="store_buy_normal"))
@@ -351,7 +390,7 @@ def lab2_callback(call):
     new_stats = {}
     for k in set(u1["stats"].keys()).union(u2["stats"].keys()):
         new_stats[k] = int((u1["stats"].get(k, 20) + u2["stats"].get(k, 20)) * 0.6) + random.randint(10, 25)
-    mutant = {"id": str(uuid.uuid4())[:8], "name": f"🧪 Мутант ({u1['name'].split()[0]})", "desc": "Мутация.", "stats": new_stats}
+    mutant = {"id": str(uuid.uuid4())[:8], "name": f"🧪 Мутант ({u1['name'].split()[0]})", "desc": "Mutation.", "stats": new_stats}
     p["colony"] = [u for u in p["colony"] if u["id"] not in [p1_id, p2_id]]
     p["colony"].append(mutant)
     save_player(uid, p)
@@ -439,26 +478,92 @@ def pvp_turn_callback(call):
         else:
             send_pvp_controls(b_id)
 
-# ==================== АДМИН ПАНЕЛЬ СПИСКА УЧАСТНИКОВ ====================
+# ==================== АДМИН ПАНЕЛЬ И ОБНУЛЕНИЕ СТОРОННИХ ПОЛЬЗОВАТЕЛЕЙ ====================
 @bot.message_handler(func=lambda msg: msg.text == "👑 Управление Ульем" and msg.from_user.id == ADMIN_ID)
 def admin_cmd(message):
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("📋 Все участники и ID", callback_data="adm_list_users"))
     markup.row(types.InlineKeyboardButton("🔋 Начислить биомассу", callback_data="adm_give_other"))
+    markup.row(types.InlineKeyboardButton("🧹 Обнулить игрока", callback_data="adm_clear_user_start"))
     bot.send_message(message.chat.id, "👑 **Панель Управления**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_") and call.from_user.id == ADMIN_ID)
 def admin_callbacks(call):
     action = call.data.replace("adm_", "")
+    
     if action == "list_users":
         user_list = "📋 **Список зарегистрированных колоний:**\n━━━━━━━━━━━━━━━━━━━━\n"
         for uid, data in LOCAL_DB.items():
             user_list += f"👤 Игрок: *{data.get('username','Игрок')}*\n🆔 ID: `{uid}`\n🔋 Биомасса: `{data.get('biomass',0)}` ед.\n🐜 Особей: {len(data.get('colony', []))}\n━━━━━━━━━━━━━━━━━━━━\n"
         bot.send_message(call.message.chat.id, user_list, parse_mode="Markdown")
+        
     elif action == "give_other":
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        msg = bot.send_message(call.message.chat.id, "🆔 Введите Telegram ID игрока:")
+        msg = bot.send_message(call.message.chat.id, "🆔 Введите Telegram ID игрока для выдачи:")
         bot.register_next_step_handler(msg, process_admin_target_id)
+        
+    elif action == "clear_user_start":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        msg = bot.send_message(call.message.chat.id, "🧹 **РЕЖИМ ОБНУЛЕНИЯ**\nВведите Telegram ID игрока, чей прогресс нужно полностью стереть:")
+        bot.register_next_step_handler(msg, process_admin_clear_id)
+
+# Шаг админки для полной очистки игрока
+def process_admin_clear_id(message):
+    if message.from_user.id != ADMIN_ID: return
+    target_id = message.text.strip()
+    
+    if target_id not in LOCAL_DB:
+        bot.send_message(message.chat.id, f"❌ Пользователь с ID `{target_id}` не найден в базе данных.", parse_mode="Markdown")
+        return
+        
+    p = LOCAL_DB[target_id]
+    
+    # Кнопки финального подтверждения для админа
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("💥 Удалить прогресс", callback_data=f"adm_force_clear_yes_{target_id}"),
+        types.InlineKeyboardButton("❌ Отмена", callback_data="adm_force_clear_no")
+    )
+    
+    bot.send_message(
+        message.chat.id, 
+        f"❓ Вы действительно хотите безвозвратно уничтожить муравейник игрока *{p.get('username', 'Игрок')}* (ID: `{target_id}`)?", 
+        parse_mode="Markdown", 
+        reply_markup=markup
+    )
+
+# Обработка окончательного решения админа по сбросу
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_force_clear_") and call.from_user.id == ADMIN_ID)
+def execute_admin_clear_callback(call):
+    data = call.data.replace("adm_force_clear_", "").split("_")
+    decision = data[0]
+    
+    if decision == "no":
+        bot.edit_message_text("❌ Принудительное обнуление отменено.", call.message.chat.id, call.message.message_id)
+        return
+        
+    if decision == "yes":
+        target_id = data[1]
+        if target_id in LOCAL_DB:
+            username = LOCAL_DB[target_id].get('username', 'Игрок')
+            
+            # Возвращаем дефолтные параметры в базу
+            LOCAL_DB[target_id] = {
+                "_id": target_id,
+                "biomass": 500,
+                "colony": [],
+                "username": username,
+                "last_expedition": 0
+            }
+            save_db(LOCAL_DB)
+            
+            bot.edit_message_text(f"💥 **Муравейник игрока {username} (ID: {target_id}) успешно стерт и обнулен!**", call.message.chat.id, call.message.message_id)
+            
+            # Уведомляем бедолагу в ЛС
+            try:
+                bot.send_message(int(target_id), "⚠️ **Внимание!** Администратор полностью обнулил ваш игровой прогресс. Вы можете начать заново с команды /start.")
+            except Exception:
+                pass
 
 def process_admin_target_id(message):
     if message.from_user.id != ADMIN_ID: return
