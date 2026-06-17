@@ -4,7 +4,7 @@ import os
 import asyncio
 import time  # Для отслеживания времени кулдауна
 import threading  # Для фонового веб-сервера
-from datetime import datetime  # Новое: для работы с датой и временем регистрации
+from datetime import datetime, date  # Для работы с датой, временем и квестами
 from http.server import SimpleHTTPRequestHandler, HTTPServer # Для сервера
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -56,12 +56,21 @@ ADMIN_ID = 7501899378
 COOLDOWNS = {}
 COOLDOWN_TIME = 1.5 
 
-# ==================== СТИЛЬНАЯ КЛАВИАТУРА КНОПОК ====================
+# Вспомогательная функция для безопасного вывода юзернеймов в Markdown
+def escape_markdown(text):
+    if not text:
+        return ""
+    for c in ['_', '*', '`', '[']:
+        text = text.replace(c, f"\\{c}")
+    return text
+
+# ==================== ОБНОВЛЕННАЯ СТИЛЬНАЯ КЛАВИАТУРА ====================
 def get_main_keyboard():
     buttons = [
         ["📦 Открыть пак", "👤 Мой профиль"],      
         ["🗂️ Моя коллекция", "🏆 ТОП игроков"],    
-        ["🛍️ Магазин", "⚠️ Сброс прогресса"]       
+        ["🛍️ Магазин", "🎲 Зона Удачи & Квесты"], # Наша новая мега-кнопка
+        ["⚠️ Сброс прогресса"]       
     ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
@@ -84,7 +93,6 @@ def run_health_server():
 
 # ==================== ФУНКЦИИ РАБОТЫ С БАЗОЙ ДАННЫХ ====================
 def register_user(user_id, first_name, username=None):
-    # Добавляем сохранение username и даты регистрации joined_at
     update_data = {"first_name": first_name}
     if username:
         update_data["username"] = username
@@ -98,7 +106,13 @@ def register_user(user_id, first_name, username=None):
                 "packs_opened": 0, 
                 "active_title": "Нет титула", 
                 "owned_titles": ["Нет титула"],
-                "joined_at": datetime.utcnow().isoformat()  # Время первой регистрации в формате ISO
+                "joined_at": datetime.utcnow().isoformat(),
+                # Поля для ежедневной статистики (квестов)
+                "daily_date": "",
+                "daily_packs": 0,
+                "daily_games": 0,
+                "daily_reward_packs_claimed": False,
+                "daily_reward_games_claimed": False
             }
         },
         upsert=True
@@ -111,7 +125,33 @@ def get_user_stats(user_id):
     return 0, 0, "Нет титула", ["Нет титула"]
 
 def increment_packs(user_id):
+    # Общий счетчик
     users_col.update_one({"user_id": user_id}, {"$inc": {"packs_opened": 1}})
+    # Ежедневный счетчик квестов
+    check_and_reset_daily(user_id)
+    users_col.update_one({"user_id": user_id}, {"$inc": {"daily_packs": 1}})
+
+def increment_daily_games(user_id):
+    check_and_reset_daily(user_id)
+    users_col.update_one({"user_id": user_id}, {"$inc": {"daily_games": 1}})
+
+def check_and_reset_daily(user_id):
+    """Сверяет текущую дату. Если день изменился — сбрасывает дневной прогресс квестов."""
+    today_str = date.today().isoformat()
+    user = users_col.find_one({"user_id": user_id})
+    if user and user.get("daily_date") != today_str:
+        users_col.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "daily_date": today_str,
+                    "daily_packs": 0,
+                    "daily_games": 0,
+                    "daily_reward_packs_claimed": False,
+                    "daily_reward_games_claimed": False
+                }
+            }
+        )
 
 def update_user_coins(user_id, amount):
     users_col.update_one({"user_id": user_id}, {"$inc": {"coins": amount}})
@@ -183,13 +223,37 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile_text = f"👤 *Профиль игрока {update.effective_user.first_name}*\nID: `{user_id}`\n🎖️ Титул: *{title}*\n🪙 Баланс: {coins} монеток\n📦 Открыто паков: {packs}\n"
     await update.message.reply_text(profile_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
+# ==================== УВЕЛИЧЕННЫЙ ТОП ДО 20 МЕСТ ====================
 async def top_players_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top_users = users_col.find().sort("coins", -1).limit(10)
-    text = "🏆 *ТОП-10 БОГАТЕЙШИХ ИГРОКОВ DAcards* 🏆\n\n"
+    top_users = users_col.find().sort("coins", -1).limit(20) # Лимит до 20 мест
+    text = "🏆 *ТОП-20 БОГАТЕЙШИХ ИГРОКОВ DAcards* 🏆\n\n"
     for index, user in enumerate(top_users, start=1):
-        emoji = "🥇" if index == 1 else "🥈" if index == 2 else "🥉" if index == 3 else f"{index}."
+        if index == 1: emoji = "🥇"
+        elif index == 2: emoji = "🥈"
+        elif index == 3: emoji = "🥉"
+        elif index <= 10: emoji = "✨"
+        else: emoji = "▪️"
+        
         text += f"{emoji} *{user.get('first_name', 'Игрок')}* — {user.get('coins', 0)} 🪙 ({user.get('active_title', 'Нет титула')})\n"
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+# ==================== МЕНЮ НОВОЙ КНОПКИ: УДАЧА И КВЕСТЫ ====================
+async def lucky_and_quests_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    register_user(user_id, update.effective_user.first_name, update.effective_user.username)
+    
+    text = (
+        "🎲 *ИГРОВАЯ ЗОНА DAcards* 📋\n\n"
+        "Рады приветствовать тебя в развлекательном секторе!\n"
+        "Выбирай, чем хочешь заняться:\n\n"
+        "🎲 *Испытать удачу* — делай ставки монетами и выигрывай джекпоты!\n"
+        "📋 *Ежедневные задания* — выполняй регулярные квесты и получай стабильный доход!"
+    )
+    kb = [
+        [InlineKeyboardButton("🎲 Испытать удачу", callback_data="open_lucky_dice_menu")],
+        [InlineKeyboardButton("📋 Ежедневные задания", callback_data="open_daily_quests_menu")]
+    ]
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 # ==================== ЛОГИКА СТИЛЬНОЙ КОЛЛЕКЦИИ (УДАЛЕНИЕ НА ВЫБОР) ====================
 async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -241,7 +305,7 @@ async def open_shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("🛍️ *Главное меню Торгового Центра DAcards.*\nВыберите необходимый отдел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-# ==================== ОБНОВЛЕННЫЕ АДМИНИСТРАТИВНЫЕ КОМАНДЫ ====================
+# ==================== АДМИНИСТРАТИВНЫЕ КОМАНДЫ ====================
 async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -254,24 +318,23 @@ async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"👥 *СПИСОК ВСЕХ ИГРОКОВ БОТА ({len(all_users)}):*\n\n"
     
     for user in all_users:
-        # Получаем юзернейм или пишем, что его нет
         username_val = user.get("username")
-        username_text = f"@{username_val}" if username_val else "нет @username"
+        if username_val:
+            username_text = f"@{escape_markdown(username_val)}"
+        else:
+            username_text = "_нет юзернейма_"
         
-        # Вычисляем время пребывания в боте
         joined_at_str = user.get("joined_at")
-        time_spent_text = "Неизвестно (зашел до обновления)"
+        time_spent_text = "Неизвестно"
         
         if joined_at_str:
             try:
                 joined_at_dt = datetime.fromisoformat(joined_at_str)
                 delta = datetime.utcnow() - joined_at_dt
-                
                 days = delta.days
                 hours = delta.seconds // 3600
                 minutes = (delta.seconds % 3600) // 60
                 
-                # Красивое форматирование строки времени
                 time_parts = []
                 if days > 0: time_parts.append(f"{days} дн.")
                 if hours > 0: time_parts.append(f"{hours} ч.")
@@ -281,7 +344,7 @@ async def users_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
 
         text += (
-            f"• *{user.get('first_name', 'Игрок')}* | {username_text}\n"
+            f"• *{escape_markdown(user.get('first_name', 'Игрок'))}* | {username_text}\n"
             f"  ID: `{user.get('user_id')}`\n"
             f"  🪙 Монеты: {user.get('coins', 0)} | 🎖️ Титул: {user.get('active_title', 'Нет')}\n"
             f"  ⏱️ В боте: `{time_spent_text}`\n\n"
@@ -312,8 +375,149 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = query.from_user.id
     data = query.data
     
+    # Сразу проверяем и подгружаем актуальные данные по квестам, чтобы не было багов с датой
+    check_and_reset_daily(user_id)
+    user_data = users_col.find_one({"user_id": user_id})
+
+    # --- МЕНЮ «ИСПЫТАТЬ УДАЧУ» ---
+    if data == "open_lucky_dice_menu":
+        coins = user_data.get("coins", 0)
+        text = (
+            "🎲 *ИСПЫТАЙ СВОЮ УДАЧУ!* 🎲\n\n"
+            "Каждая попытка бросить кубики стоит *50 монет*.\n\n"
+            "Возможные исходы:\n"
+            "🔴 Проигрыш (0 монет) [Шанс 50%]\n"
+            "🟡 Возврат ставки (50 монет) [Шанс 30%]\n"
+            "🟢 Небольшой выигрыш (100 монет) [Шанс 15%]\n"
+            "🔥 ДЖЕКПОТ (300 монет)! [Шанс 5%]\n\n"
+            f"💰 Твой баланс: {coins} 🪙"
+        )
+        kb = [
+            [InlineKeyboardButton("🎲 Бросить кубики (50 🪙)", callback_data="play_lucky_dice")],
+            [InlineKeyboardButton("⬅️ Назад в Игровую Зону", callback_data="back_to_games_zone")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    elif data == "play_lucky_dice":
+        coins = user_data.get("coins", 0)
+        if coins < 50:
+            await query.message.reply_text("❌ У вас недостаточно монет для игры! Требуется минимум 50 🪙.")
+            return
+            
+        # Засчитываем игру для ежедневного квеста
+        increment_daily_games(user_id)
+        update_user_coins(user_id, -50)
+        
+        roll = random.randint(1, 100)
+        if roll <= 50:
+            result_text = "🔴 Увы! Ваши кубики легли неудачно. Вы потеряли 50 🪙."
+            reward = 0
+        elif roll <= 80:
+            result_text = "🟡 Почти! Кубики вернули вашу ставку. Начислено: +50 🪙."
+            reward = 50
+        elif roll <= 95:
+            result_text = "🟢 Отлично! Удача улыбнулась вам. Начислено: +100 🪙."
+            reward = 100
+        else:
+            result_text = "🔥 ОГО! ВЫ ВЫБИЛИ ДЖЕКПОТ! Начислено: +300 🪙."
+            reward = 300
+            
+        update_user_coins(user_id, reward)
+        new_coins = coins - 50 + reward
+        
+        text = (
+            f"🎲 *Результат игры:*\n\n{result_text}\n\n"
+            f"💰 Ваш обновленный баланс: {new_coins} 🪙"
+        )
+        kb = [
+            [InlineKeyboardButton("🎲 Сыграть еще раз (50 🪙)", callback_data="play_lucky_dice")],
+            [InlineKeyboardButton("⬅️ Назад в Игровую Зону", callback_data="back_to_games_zone")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    # --- МЕНЮ «ЕЖЕДНЕВНЫЕ ЗАДАНИЯ» ---
+    elif data == "open_daily_quests_menu":
+        dp = user_data.get("daily_packs", 0)
+        dg = user_data.get("daily_games", 0)
+        rc_packs = user_data.get("daily_reward_packs_claimed", False)
+        rc_games = user_data.get("daily_reward_games_claimed", False)
+        
+        # Формируем текст первого задания
+        status_packs = "✅ Выполнено" if dp >= 5 else f"⏳ Прогресс: `{dp}/5`"
+        btn_text_packs = "🎁 Забрать 80 🪙" if dp >= 5 and not rc_packs else ("🎉 Забрано" if rc_packs else "❌ Не выполнено")
+        
+        # Формируем текст второго задания
+        status_games = "✅ Выполнено" if dg >= 3 else f"⏳ Прогресс: `{dg}/3`"
+        btn_text_games = "🎁 Забрать 60 🪙" if dg >= 3 and not rc_games else ("🎉 Забрано" if rc_games else "❌ Не выполнено")
+
+        text = (
+            "📋 *ЕЖЕДНЕВНЫЕ ЗАДАНИЯ DAcards* 📋\n\n"
+            "Выполняй задания каждый день. Прогресс обновляется в полночь!\n\n"
+            f"📦 *Задание 1: Начинающий кладоискатель*\nОткрыть 5 любых паков за сегодня.\n{status_packs}\n\n"
+            f"🎲 *Задание 2: Азартный игрок*\nСыграть в мини-игру «Испытать удачу» 3 раза.\n{status_games}\n"
+        )
+        
+        kb = [
+            [InlineKeyboardButton(f"Задание 1: {btn_text_packs}", callback_data="claim_reward_packs")],
+            [InlineKeyboardButton(f"Задание 2: {btn_text_games}", callback_data="claim_reward_games")],
+            [InlineKeyboardButton("⬅️ Назад в Игровую Зону", callback_data="back_to_games_zone")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    # Выдача наград за паки
+    elif data == "claim_reward_packs":
+        dp = user_data.get("daily_packs", 0)
+        rc_packs = user_data.get("daily_reward_packs_claimed", False)
+        
+        if dp < 5:
+            await query.message.reply_text("🛑 Вы еще не открыли 5 паков сегодня!")
+            return
+        if rc_packs:
+            await query.message.reply_text("🛑 Вы уже забрали эту награду сегодня!")
+            return
+            
+        users_col.update_one({"user_id": user_id}, {"$set": {"daily_reward_packs_claimed": True}})
+        update_user_coins(user_id, 80)
+        await query.message.reply_text("🎉 Отлично! Вам начислено +80 🪙 за выполнение ежедневного квеста!")
+        return
+
+    # Выдача наград за игры
+    elif data == "claim_reward_games":
+        dg = user_data.get("daily_games", 0)
+        rc_games = user_data.get("daily_reward_games_claimed", False)
+        
+        if dg < 3:
+            await query.message.reply_text("🛑 Вы еще не сыграли 3 раза в мини-игру сегодня!")
+            return
+        if rc_games:
+            await query.message.reply_text("🛑 Вы уже забрали эту награду сегодня!")
+            return
+            
+        users_col.update_one({"user_id": user_id}, {"$set": {"daily_reward_games_claimed": True}})
+        update_user_coins(user_id, 60)
+        await query.message.reply_text("🎉 Отлично! Вам начислено +60 🪙 за выполнение ежедневного квеста!")
+        return
+
+    elif data == "back_to_games_zone":
+        text = (
+            "🎲 *ИГРОВАЯ ЗОНА DAcards* 📋\n\n"
+            "Рады приветствовать тебя в развлекательном секторе!\n"
+            "Выбирай, чем хочешь заняться:\n\n"
+            "🎲 *Испытать удачу* — делай ставки монетами и выигрывай джекпоты!\n"
+            "📋 *Ежедневные задания* — выполняй регулярные квесты и получай стабильный доход!"
+        )
+        kb = [
+            [InlineKeyboardButton("🎲 Испытать удачу", callback_data="open_lucky_dice_menu")],
+            [InlineKeyboardButton("📋 Ежедневные задания", callback_data="open_daily_quests_menu")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
     # --- ЛОГИКА АДМИН-ПАНЕЛИ (ADMIN_PLAYERS) ---
-    if data.startswith("adm_manage_"):
+    elif data.startswith("adm_manage_"):
         if user_id != ADMIN_ID: return
         target_uid = int(data.replace("adm_manage_", ""))
         target_user = users_col.find_one({"user_id": target_uid})
@@ -349,7 +553,6 @@ async def shop_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("adm_reset_player_"):
         if user_id != ADMIN_ID: return
         target_uid = int(data.replace("adm_reset_player_", ""))
-        # При полном сбросе админом также обновляем дату на текущую
         users_col.update_one({"user_id": target_uid}, {"$set": {"coins": 500, "packs_opened": 0, "active_title": "Нет титула", "owned_titles": ["Нет титула"], "joined_at": datetime.utcnow().isoformat()}})
         collections_col.delete_many({"user_id": target_uid})
         await query.edit_message_text(f"💥 Полный сброс игрока `{target_uid}` выполнен!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm_back_to_list")]]) )
@@ -526,6 +729,9 @@ def main():
     application.add_handler(MessageHandler(filters.Text("👤 Мой профиль"), profile_handler))
     application.add_handler(MessageHandler(filters.Text("🏆 ТОП игроков"), top_players_handler))
     application.add_handler(MessageHandler(filters.Text("⚠️ Сброс прогресса"), request_reset_handler))
+    
+    # Регистрация новой объединенной кнопки
+    application.add_handler(MessageHandler(filters.Text("🎲 Зона Удачи & Квесты"), lucky_and_quests_main_handler))
     
     # Регистрация админских команд
     application.add_handler(CommandHandler("users_list", users_list_command))
