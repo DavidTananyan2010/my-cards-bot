@@ -427,7 +427,7 @@ def buy_callback(call):
         players[uid]["inventory"].append(card)
         bot.send_message(message.chat.id, f"🛒 Куплен обычный пак! Вылупился: **")
     elif goods == "rare":
-        if @players[uid]["balance"] < RARE_PACK_PRICE:
+         if players[uid]["balance"] < RARE_PACK_PRICE:
             bot.answer_callback_query(call.id, "❌ Недостаточно монет!", show_alert=True)
             return
         players[uid]["balance"] -= RARE_PACK_PRICE
