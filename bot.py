@@ -4,14 +4,14 @@ import os
 import asyncio
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# ==================== ТАБЛИЦА РЕДКОСТЕЙ С УРЕЗАННЫМИ ЦЕНАМИ ====================
+# ==================== ТАБЛИЦА РЕДКОСТЕЙ С ХАРАКТЕРИСТИКАМИ ====================
 REAL_CARDS_POOL = {
     "⚪ Обычная": [
         {"file": "5.jpg", "name": "Солнечный Самурай ☀️", "price": 2, "hp": 65, "atk": 13, "def": 5},
@@ -47,7 +47,6 @@ REAL_CARDS_POOL = {
     ]
 }
 
-# Стоимость улучшения карты в зависимости от её редкости
 UPGRADE_CARD_COSTS = {
     "⚪ Обычная": 25, "🟢 Необычная": 45, "🔵 Редкая": 80, "🟣 Эпическая": 150,
     "🟠 Легендарная": 300, "🔴 Мифическая": 500, "✨ Древняя": 900, "💎 Секретная": 1500,
@@ -95,6 +94,7 @@ client = MongoClient(MONGO_URI)
 db = client["cards_bot_database"]
 users_col = db["users"]
 collections_col = db["collections"]
+promo_col = db["promocodes"] # Новая коллекция для промокодов
 
 battle_sessions = {} 
 
@@ -160,6 +160,16 @@ def add_card_to_db(user_id, card):
 def get_upgrade_cost(current_level):
     return int(150 * (current_level ** 1.8))
 
+# Инициализация промокода в БД, если его еще нет
+def init_promo_db():
+    if not promo_col.find_one({"code": "cosmo"}):
+        promo_col.insert_one({
+            "code": "cosmo",
+            "uses": 0,
+            "max_uses": 25,
+            "users_activated": []
+        })
+
 # ==================== МЕНЮ ОТКРЫТИЯ ПАКОВ ====================
 async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -204,7 +214,7 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(caption_text, parse_mode="Markdown")
 
-# ==================== ОСНОВНЫЕ ТЕКСТОВЫЕ КНОПКИ ====================
+# ==================== ТЕКСТОВЫЕ КНОПКИ МЕНЮ ====================
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     register_user(user_id, update.effective_user.first_name, update.effective_user.username)
@@ -234,13 +244,16 @@ async def collection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not cards:
         await update.message.reply_text("🗂️ Твоя коллекция пока пуста. Открой свой первый пак!")
         return
-    text = "🗂️ *ТВОЙ ИНВЕНТАРЬ КАРТ С ХАРАКТЕРИСТИКАМИ:*\n\n"
+        
+    text = "🗂️ *ТВОЯ КОЛЛЕКЦИЯ КАРТ:*\nНажмите на карту, чтобы посмотреть характеристики или продать её поштучно."
+    kb = []
     for c in cards:
         lvl = c.get('level', 1)
-        text += f"• *{c['card_name']}* [Ур. {lvl}] ({c.get('rarity', '⚪ Обычная')}) — [⚔️{c.get('atk', 15)} 🛡️{c.get('def', 5)} ❤️{c.get('hp', 60)}]\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+        kb.append([InlineKeyboardButton(f"{c['card_name']} [Ур. {lvl}]", callback_data=f"inspect_card_{c['_id']}")])
+        
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-# ==================== ХАБЫ УПРАВЛЕНИЯ ИГРОЙ ====================
+# ==================== ХАБЫ И МЕНЮ УПРАВЛЕНИЯ ====================
 async def pvp_and_expeditions_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "⚔️ *ВОЕННЫЙ ШТАБ КОЛОНИИ* 🗺️\n\n"
@@ -269,33 +282,35 @@ async def upgrade_and_craft_main_handler(update: Update, context: ContextTypes.D
 async def lucky_and_quests_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🎲 *ИГРОВАЯ ЗОНА И ИСПЫТАНИЯ* 📜\n\n"
-        "⚠️ *Внимание:* На Колесо Фортуны и Арену установлен жесткий кулдаун в **2 минуты**!"
+        "⚠️ *Внимание:* На Косело Фортуны и Арену установлен жесткий кулдаун в **2 минуты**!"
     )
     kb = [
         [InlineKeyboardButton("🎡 Колесо Фортуны", callback_data="menu_wheel"),
-         InlineKeyboardButton("🏟️ Арена Карт (Интерактивная)", callback_data="menu_card_arena")]
+         InlineKeyboardButton("🏟️ Арена Карт (Враги слабые)", callback_data="menu_card_arena")]
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def shop_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "🛍️ *ТОРГОВАЯ ЛАВКА КОЛОНИИ*"
+    text = "🛍️ *ТОРГОВАЯ ЛАВКА И ГАРДЕРОБ КОЛОНИИ*"
     kb = [
-        [InlineKeyboardButton("💰 Сдача дубликатов", callback_data="shop_sell_duplicates")],
-        [InlineKeyboardButton("🎖️ Магазин Титулов", callback_data="shop_titles_menu")]
+        [InlineKeyboardButton("🧹 Продать ВСЕ дубликаты", callback_data="shop_sell_duplicates")],
+        [InlineKeyboardButton("🎖️ Магазин Титулов", callback_data="shop_titles_menu")],
+        [InlineKeyboardButton("👤 Гардеробная титулов / Надеть", callback_data="menu_wardrobe")]
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def bonuses_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "🎁 *ЦЕНТР РАЗВИТИЯ КОЛОНИИ* 💎"
+    text = "🎁 *ЦЕНТР РАЗВИТИЯ КОЛОНИИ И БОНУСЫ* 💎"
     kb = [
         [InlineKeyboardButton("🏦 Муравьиный Банк", callback_data="menu_bank"),
          InlineKeyboardButton("🎨 Кастомизация", callback_data="menu_themes_list")],
+        [InlineKeyboardButton("🎟️ Активировать промокод", callback_data="menu_promo_hub")], # Добавили хаб промокодов
         [InlineKeyboardButton("💎 донат тут", url="https://t.me/davit2010yt")]
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 
-# ==================== ИНЛАЙН ОБРАБОТЧИК (ОСНОВНАЯ ЛОГИКА) ====================
+# ==================== ЦЕНТРАЛЬНЫЙ CALLBACK-ОБРАБОТЧИК ====================
 async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -307,8 +322,122 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     now = time.time()
 
-    # ==================== МЕХАНИКА УЛУЧШЕНИЯ КАРТ ====================
-    if data == "menu_card_upgrade_list":
+    # ==================== СИСТЕМА ПРОМОКОДОВ ====================
+    if data == "menu_promo_hub":
+        text = "🎟️ *АКТИВАЦИЯ БОНУСНЫХ КОДОВ*\n\nНажмите на кнопку с названием промокода ниже, чтобы мгновенно получить ценные призы!"
+        kb = [[InlineKeyboardButton("🔥 Промокод: cosmo", callback_data="promo_click_cosmo")]]
+        await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    elif data == "promo_click_cosmo":
+        promo = promo_col.find_one({"code": "cosmo"})
+        if not promo:
+            await query.message.reply_text("❌ Промокод не настроен в базе данных.")
+            return
+
+        # Проверка 1: Использовал ли этот человек код ранее
+        if user_id in promo.get("users_activated", []):
+            await query.message.reply_text("⚠️ *ПРЕДУПРЕЖДЕНИЕ:* Вы уже активировали промокод `cosmo`! Повторное использование невозможно.", parse_mode="Markdown")
+            return
+
+        # Проверка 2: Лимит активаций на весь бот (25 раз)
+        if promo.get("uses", 0) >= promo.get("max_uses", 25):
+            await query.message.reply_text("⚠️ *ПРЕДУПРЕЖДЕНИЕ:* Лимит активаций промокода `cosmo` (25/25) полностью исчерпан! Вы не успели.", parse_mode="Markdown")
+            return
+
+        # Активация: Начисляем монеты и добавляем титул в список игрока
+        users_col.update_one(
+            {"user_id": user_id},
+            {
+                "$inc": {"coins": 150},
+                "$addToSet": {"owned_titles": "CosmoMan"}
+            }
+        )
+
+        # Обновляем глобальный счетчик использований в таблице промокодов
+        promo_col.update_one(
+            {"code": "cosmo"},
+            {
+                "$inc": {"uses": 1},
+                "$push": {"users_activated": user_id}
+            }
+        )
+
+        current_uses = promo.get("uses", 0) + 1
+        await query.message.reply_text(
+            f"🚀 *ПРОМОКОД УСПЕШНО АКТИВИРОВАН!* 🚀\n\n"
+            f"🎁 Ваши награды:\n"
+            f"🪙 +*150 монет* зачислены на баланс!\n"
+            f"🎖️ Получен уникальный титул: *CosmoMan* (Доступен в Гардеробной!)\n\n"
+            f"📊 Использовано: `{current_uses}/25` раз глобально.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # ==================== ПРОСМОТР И ПРОДАЖА 1 КАРТЫ ====================
+    elif data.startswith("inspect_card_"):
+        card_id = data.replace("inspect_card_", "")
+        card = collections_col.find_one({"_id": ObjectId(card_id), "user_id": user_id})
+        if not card:
+            await query.message.reply_text("❌ Карта не найдена в вашей коллекции.")
+            return
+            
+        lvl = card.get('level', 1)
+        sell_price = card.get('price', 2)
+        text = (
+            f"🔍 *ИНФОРМАЦИЯ О КАРТЕ:*\n\n"
+            f"🃏 Название: *{card['card_name']}*\n"
+            f"✨ Редкость: *{card.get('rarity', '⚪ Обычная')}*\n"
+            f"⭐ Уровень: `{lvl}`\n\n"
+            f"❤️ HP: `{card.get('hp', 60)}` | ⚔️ ATK: `{card.get('atk', 15)}` | 🛡️ DEF: `{card.get('def', 5)}`\n\n"
+            f"🪙 Стоимость продажи: *{sell_price}* 🪙"
+        )
+        kb = [[InlineKeyboardButton(f"💰 Продать эту карту (+{sell_price} 🪙)", callback_data=f"sell_one_{card_id}")]]
+        await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    elif data.startswith("sell_one_"):
+        card_id = data.replace("sell_one_", "")
+        card = collections_col.find_one({"_id": ObjectId(card_id), "user_id": user_id})
+        if not card:
+            await query.message.reply_text("❌ Карта уже продана или не существует.")
+            return
+            
+        sell_price = card.get('price', 2)
+        collections_col.delete_one({"_id": ObjectId(card_id)})
+        update_user_coins(user_id, sell_price)
+        
+        await query.message.reply_text(f"✅ Вы успешно продали карту *{card['card_name']}* за +{sell_price} 🪙!")
+        return
+
+    # ==================== ГАРДЕРОБНАЯ ТИТУЛОВ / НАДЕТЬ ====================
+    elif data == "menu_wardrobe":
+        owned_titles = ud.get("owned_titles", ["Нет титула"])
+        active_title = ud.get("active_title", "Нет титула")
+        
+        text = f"👤 *ГАРДЕРОБНАЯ ТИТУЛОВ*\n\nТекущий титул: *{active_title}*\n Выберите из списка купленных, чтобы надеть:"
+        kb = []
+        for title in owned_titles:
+            mark = " ✅" if title == active_title else ""
+            kb.append([InlineKeyboardButton(f"{title}{mark}", callback_data=f"equip_title_{title}")])
+            
+        await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+
+    elif data.startswith("equip_title_"):
+        target_title = data.replace("equip_title_", "")
+        owned_titles = ud.get("owned_titles", ["Нет титула"])
+        
+        if target_title not in owned_titles:
+            await query.message.reply_text("❌ Вы ещё не открыли этот титул в магазине.")
+            return
+            
+        users_col.update_one({"user_id": user_id}, {"$set": {"active_title": target_title}})
+        await query.message.reply_text(f"👑 Вы успешно надели титул: *{target_title}*!", parse_mode="Markdown")
+        return
+
+    # ==================== ПРОКАЧКА КАРТ ====================
+    elif data == "menu_card_upgrade_list":
         cards = get_user_cards(user_id)
         if not cards:
             await query.message.reply_text("❌ У вас нет карт для улучшения.")
@@ -336,16 +465,14 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         cost = UPGRADE_CARD_COSTS.get(rarity, 50)
         
         if ud.get("coins", 0) < cost:
-            await query.message.reply_text(f"❌ Недостаточно монет! Улучшение этой карты стоит {cost} 🪙.")
+            await query.message.reply_text(f"❌ Недостаточно монет! Стоимость прокачки: {cost} 🪙.")
             return
             
-        # Рассчитываем прирост +20%
         new_hp = int(card.get("hp", 50) * 1.2)
         new_atk = int(card.get("atk", 10) * 1.2)
         new_def = int(card.get("def", 5) * 1.2)
         new_lvl = card.get("level", 1) + 1
         
-        # Обновляем в БД
         collections_col.update_one(
             {"_id": ObjectId(card_id)},
             {"$set": {"hp": new_hp, "atk": new_atk, "def": new_def, "level": new_lvl}}
@@ -353,17 +480,17 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -cost}})
         
         await query.message.reply_text(
-            f"🔥 **УСПЕШНОЕ УЛУЧШЕНИЕ!** 🔥\n\n"
-            f"🐜 Карта: *{card['card_name']}*\n"
+            f"🔥 **КАРТА УЛУЧШЕНА!** 🔥\n\n"
+            f"🐜 Имя: *{card['card_name']}*\n"
             f"⭐ Новый уровень: `{new_lvl}` ⭐\n"
             f"❤️ HP: {card.get('hp')} ➡️ `{new_hp}`\n"
             f"⚔️ ATK: {card.get('atk')} ➡️ `{new_atk}`\n"
             f"🛡️ DEF: {card.get('def')} ➡️ `{new_def}`\n\n"
-            f"Списано: -{cost} 🪙"
+            f"Потрачено: -{cost} 🪙"
         , parse_mode="Markdown")
         return
 
-    # ==================== КОЛЕCО ФОРТУНЫ ====================
+    # ==================== КОЛЕСО ФОРТУНЫ ====================
     elif data == "menu_wheel":
         last_wheel = ud.get("last_wheel_time", 0)
         passed = now - last_wheel
@@ -380,11 +507,11 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(f"🎡 Выигрыш: *{win}* 🪙!", parse_mode="Markdown")
         return
 
-    # ==================== ЛОГИКА ПОХОДОВ ====================
+    # ==================== ЭКСПЕДИЦИИ ====================
     elif data == "hub_expedition":
         is_active = ud.get("expedition_active", False)
         if not is_active:
-            text = "🗺️ *ВАШ ОТРЯД В КАЗАРМАХ*\n\nВы можете отправить муравьев в поход на **2 минуты** за сокровищами."
+            text = "🗺️ *ВАШ ОТРЯД В КАЗАРМАХ*\n\nВы можете отправить муравьев в поход на **2 минуты**."
             kb = [[InlineKeyboardButton("🚀 Отправиться в Поход", callback_data="expedition_start")]]
         else:
             start_time = ud.get("expedition_start_time", 0)
@@ -393,7 +520,7 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 text = "🎉 *ПОХОД ЗАВЕРШЕН!* \nЗаберите награду!"
                 kb = [[InlineKeyboardButton("💰 Забрать Добычу", callback_data="expedition_claim")]]
             else:
-                text = f"🗺️ *ОТРЯД В ПУТИ*\nОсталось: `{int(120 - elapsed)}` сек.\n\nВы можете отменить поход, но награда сгорит."
+                text = f"🗺️ *ОТРЯД В ПУТИ*\nОсталось: `{int(120 - elapsed)}` сек."
                 kb = [
                     [InlineKeyboardButton("🔄 Проверить Статус", callback_data="hub_expedition")],
                     [InlineKeyboardButton("❌ Отменить Поход", callback_data="expedition_cancel")]
@@ -424,7 +551,7 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(f"💰 Из похода принесено +{reward} 🪙")
         return
 
-    # ==================== АРЕНА (ОСЛАБЛЕННЫЕ ПРОТИВНИКИ) ====================
+    # ==================== АРЕНА ====================
     elif data == "menu_card_arena":
         last_arena = ud.get("last_arena_time", 0)
         passed = now - last_arena
@@ -444,7 +571,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             p_name, p_hp, p_atk, p_def = "🐜 Муравей-Рядовой", 65, 13, 5
 
-        # НАСТРОЙКА СЛАБЫХ ВРАГОВ ПО ТВОЕМУ ЗАПРОСУ: HP=65, DEF=30, ATK=35
         b_name = random.choice(["🦟 Ослабленный Комар", "🐝 Сонный Шершень", "🕷️ Хрупкий Паучок"])
         b_hp = 65
         b_atk = 35
@@ -460,7 +586,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             f"🏟️ *НАЧАЛО БОЯ (Враги ослаблены!)*\n\n"
             f"🟢 *Ты:* {p_name} [❤️{p_hp} HP | ⚔️{p_atk} | 🛡️{p_def}]\n"
             f"🔴 *Враг:* {b_name} [❤️{b_hp} HP | ⚔️{b_atk} | 🛡️{b_def}]\n\n"
-            f"Управляйте поединком:"
         )
         kb = [
             [InlineKeyboardButton("⚔️ Сделать Ход", callback_data="arena_action_hit")],
@@ -480,7 +605,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         if action == "hit":
-            # Твой урон по боссу
             dmg_to_boss = max(1, session["p_atk"] - session["b_def"])
             session["b_hp"] -= dmg_to_boss
             log = f"🥊 *Раунд {session['round']}:*\nВы нанесли врагу `{dmg_to_boss}` урона.\n"
@@ -493,7 +617,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 del battle_sessions[user_id]
                 return
 
-            # Контратака ослабленного босса
             dmg_to_player = max(1, session["b_atk"] - session["p_def"])
             session["p_hp"] -= dmg_to_player
             log += f"💥 Противник наносит в ответ `{dmg_to_player}` урона.\n"
@@ -504,11 +627,6 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
             session["round"] += 1
-            if session["round"] > 10:
-                await query.message.reply_text("⏳ Ничья!")
-                del battle_sessions[user_id]
-                return
-
             status_text = f"{log}\n🟢 *Вы:* ❤️ `{session['p_hp']}` HP\n🔴 *Враг:* ❤️ `{session['b_hp']}` HP"
             kb = [
                 [InlineKeyboardButton("⚔️ Сделать Следующий Ход", callback_data="arena_action_hit")],
@@ -517,7 +635,7 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text(status_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
             return
 
-    # ==================== ОСТАЛЬНЫЕ МЕНЮ СИСТЕМЫ ====================
+    # ==================== ОЧИСТКА ВСЕХ ДУБЛИКАТОВ ====================
     elif data == "shop_sell_duplicates":
         cards = get_user_cards(user_id)
         counts = {}
@@ -531,13 +649,14 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     sold_count += 1
         if sold_count > 0:
             update_user_coins(user_id, total_earnings)
-            await query.message.reply_text(f"💰 Продано дубликатов: {sold_count} шт. Получено: +{total_earnings} 🪙")
+            await query.message.reply_text(f"🧹 Продажа дубликатов завершена! Удалено: {sold_count} карт. Получено в банк: +{total_earnings} 🪙")
         else:
-            await query.message.reply_text("🔍 Повторяющихся карт не найдено.")
+            await query.message.reply_text("🔍 Дублирующихся карт в вашей коллекции не найдено.")
         return
 
+    # ==================== МАГАЗИН ТИТУЛОВ ====================
     elif data == "shop_titles_menu":
-        text = "🎖️ *МАГАЗИН ВНУТРИИГРОВЫХ ТИТУЛОВ:*"
+        text = "🎖️ *МАГАЗИН ВНУТРИИГРОВЫХ ТИТУЛОВ:*\n(Купленные титулы отправляются в Гардеробную)"
         kb = []
         owned_titles = ud.get("owned_titles", ["Нет титула"])
         for tid, tinfo in SHOP_TITLES.items():
@@ -551,14 +670,18 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         title_info = SHOP_TITLES[tid]
         owned_titles = ud.get("owned_titles", ["Нет титула"])
         if title_info["name"] in owned_titles:
-            users_col.update_one({"user_id": user_id}, {"$set": {"active_title": title_info["name"]}})
-            await query.message.reply_text(f"✅ Титул *{title_info['name']}* активирован!", parse_mode="Markdown")
+            await query.message.reply_text("❌ Этот титул уже куплен вами. Перейдите в Гардеробную, чтобы его надеть!")
         else:
             if ud.get("coins", 0) < title_info["price"]:
-                await query.message.reply_text("❌ Недостаточно монет.")
+                await query.message.reply_text("❌ Недостаточно монет для покупки титула.")
             else:
-                users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -title_info["price"]}, "$addToSet": {"owned_titles": title_info["name"]}, "$set": {"active_title": title_info["name"]}})
-                await query.message.reply_text(f"🎉 Куплен титул *{title_info['name']}*!", parse_mode="Markdown")
+                users_col.update_one({
+                    "user_id": user_id
+                }, {
+                    "$inc": {"coins": -title_info["price"]}, 
+                    "$addToSet": {"owned_titles": title_info["name"]}
+                })
+                await query.message.reply_text(f"🎉 Вы успешно купили титул *{title_info['name']}*! Надеть его можно в Гардеробной.", parse_mode="Markdown")
         return
 
     elif data == "buy_colony_upgrade":
@@ -577,8 +700,7 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("❌ Нужно минимум 3 карты.")
             return
         for bc in cards[:3]: collections_col.delete_one({"_id": bc["_id"]})
-        available_rarities = list(REAL_CARDS_POOL.keys())
-        chosen_r = random.choice(available_rarities)
+        chosen_r = random.choice(list(REAL_CARDS_POOL.keys()))
         new_card = random.choice(REAL_CARDS_POOL[chosen_r])
         final_card = {**new_card, "rarity": chosen_r, "level": 1}
         add_card_to_db(user_id, final_card)
@@ -631,8 +753,9 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Используйте меню кнопок для управления.")
 
-# ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
+# ==================== ЗАПУСК БОТА ====================
 def main():
+    init_promo_db() # Подгружаем промокод перед стартом
     threading.Thread(target=run_health_server, daemon=True).start()
     application = Application.builder().token(TOKEN).build()
 
