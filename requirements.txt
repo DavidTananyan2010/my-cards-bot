@@ -1,9 +1,4 @@
-﻿anyio==4.13.0
-certifi==2026.5.20
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-idna==3.18
-python-telegram-bot==22.8
+pyTelegramBotAPI==4.12.0
 pymongo==4.7.2
 dnspython==2.6.1
+certifi==2026.5.20
