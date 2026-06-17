@@ -11,37 +11,40 @@ from bson.objectid import ObjectId
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# ==================== ТАБЛИЦА РЕДКОСТЕЙ (КОМПАКТНАЯ) ====================
+# ==================== ТАБЛИЦА РЕДКОСТЕЙ (ТЕМАТИКА КОЛОНИЙ) ====================
 REAL_CARDS_POOL = {
     "⚪ Обычная": [
-        {"file": "5.jpg", "name": "Солнечный Самурай ☀️", "price": 2, "hp": 65, "atk": 13, "def": 5}
+        {"file": "5.jpg", "name": "Муравей-Рабочий 🐜", "price": 2, "hp": 65, "atk": 13, "def": 5},
+        {"file": "11.jpg", "name": "Пчела-Сборщица 🐝", "price": 2, "hp": 60, "atk": 15, "def": 4}
     ],
     "🟢 Необычная": [
-        {"file": "6.jpg", "name": "Таинственный Лось 🦌", "price": 4, "hp": 75, "atk": 15, "def": 6},
+        {"file": "6.jpg", "name": "Муравей-Солдат ⚔️", "price": 4, "hp": 85, "atk": 18, "def": 8},
+        {"file": "12.jpg", "name": "Трутень-Охранник 🛡️", "price": 4, "hp": 80, "atk": 16, "def": 10}
     ],
     "🔵 Редкая": [
-        {"file": "9.jpg", "name": "Страж Дубравы 🌲", "price": 6, "hp": 90, "atk": 18, "def": 12}
+        {"file": "9.jpg", "name": "Грибовод-Прораб 🍄", "price": 6, "hp": 100, "atk": 20, "def": 12},
+        {"file": "13.jpg", "name": "Медоносный Разведчик 🗺️", "price": 6, "hp": 95, "atk": 22, "def": 9}
     ],
     "🟣 Эпическая": [
-        {"file": "4.jpg", "name": "Меха-Бык 🐂", "price": 12, "hp": 110, "atk": 24, "def": 15}
+        {"file": "4.jpg", "name": "Термит-Разрушитель 🪵", "price": 12, "hp": 130, "atk": 28, "def": 18}
     ],
     "🟠 Легендарная": [
-        {"file": "7.jpg", "name": "Призрак Леса 👻", "price": 18, "hp": 125, "atk": 28, "def": 16}
+        {"file": "7.jpg", "name": "Генерал Армии Листорезов 🍁", "price": 18, "hp": 160, "atk": 35, "def": 20}
     ],
     "🔴 Мифическая": [
-        {"file": "8.jpg", "name": "Лесной Хакер 💻", "price": 30, "hp": 155, "atk": 35, "def": 22}
+        {"file": "8.jpg", "name": "Кибер-Личинка 💻", "price": 30, "hp": 200, "atk": 42, "def": 25}
     ],
     "✨ Древняя": [
-        {"file": "2.jpg", "name": "👻losnya🐂🌲", "price": 50, "hp": 210, "atk": 45, "def": 28}
+        {"file": "2.jpg", "name": "Королева Матка 👑", "price": 50, "hp": 300, "atk": 50, "def": 35}
     ],
     "💎 Секретная": [
-        {"file": "3.jpg", "name": "Дониёр 🌲", "price": 85, "hp": 290, "atk": 58, "def": 38}
+        {"file": "3.jpg", "name": "Императорский Скорпион 🦂", "price": 85, "hp": 420, "atk": 75, "def": 45}
     ],
     "🌟 Божественная": [
-        {"file": "10.jpg", "name": "𝒎𝒐𝒐𝒏🌳", "price": 250, "hp": 550, "atk": 100, "def": 52}
+        {"file": "10.jpg", "name": "𝑴𝒐𝒐𝒏🌳 Покровитель Леса", "price": 250, "hp": 650, "atk": 110, "def": 60}
     ],
     "👑 Эксклюзивная": [
-        {"file": "1.jpg", "name": "金 sunny🌲 김지ха | DA 🐂", "price": 140, "hp": 410, "atk": 75, "def": 70}
+        {"file": "1.jpg", "name": "金 Солнечный Разум Улья ☀️", "price": 140, "hp": 500, "atk": 90, "def": 80}
     ]
 }
 
@@ -52,9 +55,9 @@ UPGRADE_CARD_COSTS = {
 }
 
 EMPTY_RESPONSES = [
-    "Эта карта оказалась пустой... Открой ещё разок! 😔",
-    "Эх, тут ничего не оказалось. Повезет в следующий раз! 💨",
-    "Увы, пак пуст. Фортуна сегодня отдыхает 🃏"
+    "Эта ячейка оказалась пустой... Открой ещё разок! 😔",
+    "Эх, тут нет насекомых. Повезет в следующий раз! 💨",
+    "Увы, пак пуст. Муравьи спрятались глубоко в ходах 🃏"
 ]
 
 SHOP_TITLES = {
@@ -177,7 +180,7 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     COOLDOWNS[user_id] = current_time
     
     rarities = ["🗑️ Пустышка", "⚪ Обычная", "🟢 Необычная", "🔵 Редкая", "🟣 Эпическая", "🟠 Легендарная", "🔴 Мифическая", "✨ Древняя", "💎 Секретная", "🌟 Божественная", "👑 Эксклюзивная"]
-    weights = [50.0, 35.0, 25.0, 15.0, 10.0, 5.0, 3.0, 1.5, 0.8, 0.4, 0.05]
+    weights = [45.0, 35.0, 25.0, 15.0, 10.0, 5.0, 3.0, 1.5, 0.8, 0.4, 0.05]
     
     chosen_rarity = random.choices(rarities, weights=weights, k=1)[0]
     users_col.update_one({"user_id": user_id}, {"$inc": {"packs_opened": 1}})
@@ -197,12 +200,12 @@ async def open_pack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         path_to_image = f"cards/{dropped_card['file']}"
         caption_text = (
-            f"🎉 **ВЫПАЛА КАРТА!** 🎉\n\n"
+            f"🎉 **ВЫПАЛА КАРТА КОЛОНИИ!** 🎉\n\n"
             f"👤 Название: *{dropped_card['name']}*\n"
             f"✨ Редкость: *{dropped_card['rarity']}*\n"
             f"⭐ Уровень: `1`⭐\n"
             f"❤️ HP: `{dropped_card['hp']}` | ⚔️ ATK: `{dropped_card['atk']}` | 🛡️ DEF: `{dropped_card['def']}`\n\n"
-            f"🪙 Продажа в банк: +*{dropped_card['price']}* 🪙"
+            f"🪙 Авто-начисление в банк: +*{dropped_card['price']}* 🪙"
         )
         if os.path.exists(path_to_image):
             await update.message.reply_photo(photo=open(path_to_image, 'rb'), caption=caption_text, parse_mode="Markdown")
@@ -242,7 +245,7 @@ def get_lucky_hub_markup():
          InlineKeyboardButton("🏟️ Арена Карт (20 🪙)", callback_data="menu_card_arena")]
     ])
 
-# ==================== МЕНЮ МАГАЗИНА (ОБНОВЛЕННОЕ) ====================
+# ==================== МЕНЮ МАГАЗИНА ====================
 def get_shop_hub_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 Продажа карт", callback_data="shop_sell_cards_menu")],
@@ -471,12 +474,14 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.message.reply_text(f"✅ Продана 1 копия {card['card_name']}!")
         else:
             parts = data.replace("sell_bulk_", "").rsplit("_", 1)
-            all_matches = list(collections_col.find({"user_id": user_id, "card_name": parts[0], "level": int(parts[1])}))
+            card_name = parts[0]
+            card_lvl = int(parts[1])
+            all_matches = list(collections_col.find({"user_id": user_id, "card_name": card_name, "level": card_lvl}))
             if all_matches:
                 payout = all_matches[0].get("price", 2) * len(all_matches)
-                collections_col.delete_many({"user_id": user_id, "card_name": parts[0], "level": int(parts[1])})
+                collections_col.delete_many({"user_id": user_id, "card_name": card_name, "level": card_lvl})
                 update_user_coins(user_id, payout)
-                await query.message.reply_text(f"🧹 Продана стопка {parts[0]} ({len(all_matches)} шт.) за +{payout} 🪙!")
+                await query.message.reply_text(f"🧹 Продана стопка {card_name} ({len(all_matches)} шт.) за +{payout} 🪙!")
         return
 
     # ==================== ПРОМОКОДЫ ====================
@@ -526,7 +531,22 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("Вы не владеете этим титулом", show_alert=True)
         return
 
-    # ==================== ПРОКАЧКА КАРТ ====================
+    # ==================== ПРОКАЧКА КАРТ И КОЛОНИИ ====================
+    elif data == "buy_colony_upgrade":
+        lvl = ud.get("colony_level", 1)
+        cost = get_upgrade_cost(lvl)
+        if ud.get("coins", 0) < cost:
+            await query.answer("❌ Недостаточно монет для мутации колонии!", show_alert=True)
+            return
+        await query.answer("🧬 Колония эволюционировала!")
+        users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -cost, "colony_level": 1}})
+        
+        updated_ud = get_user_all_data(user_id)
+        new_lvl = updated_ud.get("colony_level")
+        new_cost = get_upgrade_cost(new_lvl)
+        await query.message.edit_text(f"🚀 *ЛАБОРАТОРИЯ ЭВОЛЮЦИИ*\n\n🧬 Уровень колонии повышeн до: *{new_lvl}*! (Следующая мутация: {new_cost} 🪙)", reply_markup=get_upgrade_hub_markup(new_lvl, new_cost), parse_mode="Markdown")
+        return
+
     elif data == "menu_card_upgrade_list":
         await query.answer()
         cards = get_user_cards(user_id)
@@ -551,13 +571,17 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if ud.get("coins", 0) < cost:
             await query.answer("❌ Недостаточно монет!", show_alert=True)
             return
-        await query.answer("🔥 Эволюция!")
+        await query.answer("🔥 Эволюция карточки!")
         collections_col.update_one({"_id": ObjectId(card_id)}, {"$set": {
             "hp": int(card.get("hp", 50) * 1.2), "atk": int(card.get("atk", 10) * 1.2),
             "def": int(card.get("def", 5) * 1.2), "level": card.get("level", 1) + 1
         }})
         users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -cost}})
         await query.message.reply_text(f"🔥 Карточка {card['card_name']} успешно эволюционировала!")
+        return
+
+    elif data == "menu_craft":
+        await query.answer("🔮 Крафт-Машина в разработке!", show_alert=True)
         return
 
     # ==================== КОЛЕСО И АРЕНА ====================
@@ -617,7 +641,7 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(f"❤️ Твоё HP: {session['p_hp']} | ❤️ Враг: {session['b_hp']}", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    # ==================== ЕДИНАЯ СТРУКТУРА ПРОДАЖИ КАРТ И ТИТУЛОВ ====================
+    # ==================== МАГАЗИН И ПРОДАЖА ВСЕХ / ДУБЛИКАТОВ ====================
     elif data == "shop_sell_cards_menu":
         await query.answer()
         kb = [
@@ -633,174 +657,107 @@ async def main_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if not cards:
             await query.answer("❌ Ваша коллекция пуста!", show_alert=True)
             return
-        await query.answer("💰 Полная распродажа!")
         
-        earnings = sum(c.get("price", 2) for c in cards)
+        total_payout = sum(c.get("price", 2) for c in cards)
         collections_col.delete_many({"user_id": user_id})
-        update_user_coins(user_id, earnings)
-        
-        await query.message.reply_text(f"🧹 Вы очистили весь свой инвентарь! Продано карт: {len(cards)} шт. Баланс пополнен на: +{earnings} 🪙")
+        update_user_coins(user_id, total_payout)
+        await query.answer("💰 Все карты успешно проданы!", show_alert=True)
+        await query.message.edit_text(f"🧹 Вы полностью очистили коллекцию и продали **{len(cards)} шт.** карт за +**{total_payout}** 🪙!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_shop")]]))
         return
 
     elif data == "shop_sell_duplicates_action":
         cards = get_user_cards(user_id)
+        if not cards:
+            await query.answer("❌ Ваша коллекция пуста!", show_alert=True)
+            return
+        
+        # Группируем карты для выявления дубликатов
         counts = {}
-        for c in cards: counts.setdefault(c['card_name'], []).append(c)
-        earnings, sold = 0, 0
-        for clist in counts.values():
-            if len(clist) > 1:
-                for d in clist[1:]:
-                    collections_col.delete_one({"_id": d["_id"]})
-                    earnings += d.get("price", 2)
-                    sold += 1
+        for c in cards:
+            key = (c["card_name"], c.get("level", 1))
+            counts.setdefault(key, []).append(c)
+        
+        total_payout = 0
+        total_deleted = 0
+        
+        for (name, level), copies in counts.items():
+            if len(copies) > 1:
+                # Оставляем только одну копию (первую), остальные удаляем
+                for extra_card in copies[1:]:
+                    collections_col.delete_one({"_id": extra_card["_id"]})
+                    total_payout += extra_card.get("price", 2)
+                    total_deleted += 1
                     
-        if sold > 0: 
-            update_user_coins(user_id, earnings)
-            await query.answer("🧹 Дубликаты утилизированы!")
-            await query.message.reply_text(f"🧹 Удалено лишних дубликатов: {sold} шт. Баланс пополнен на: +{earnings} 🪙")
-        else:
-            await query.answer("📋 У вас нет повторяющихся дубликатов!", show_alert=True)
+        if total_deleted == 0:
+            await query.answer("✨ У вас нет дубликатов карт!", show_alert=True)
+            return
+            
+        update_user_coins(user_id, total_payout)
+        await query.answer("👥 Дубликаты успешно утилизированы!", show_alert=True)
+        await query.message.edit_text(f"🧹 Из улья выметено **{total_deleted}** лишних копий карт. На счет колонии зачислено: +**{total_payout}** 🪙!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_shop")]]))
         return
 
     elif data == "shop_titles_menu":
         await query.answer()
         kb = []
-        for tid, tinfo in SHOP_TITLES.items():
-            status = " (Куплен)" if tinfo["name"] in ud.get("owned_titles", []) else f" — {tinfo['price']} 🪙"
-            kb.append([InlineKeyboardButton(f"{tinfo['name']}{status}", callback_data=f"buy_title_{tid}")])
+        for tid, tdata in SHOP_TITLES.items():
+            kb.append([InlineKeyboardButton(f"{tdata['name']} — {tdata['price']} 🪙", callback_data=f"buy_title_{tid}")])
         kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_shop")])
-        await query.message.edit_text("🎖️ Магазин титулов колоний:", reply_markup=InlineKeyboardMarkup(kb))
+        await query.message.edit_text("🎖️ *МАГАЗИН ТИТУЛОВ ДЛЯ ЛИДЕРОВ КОЛОНИИ*:", reply_markup=InlineKeyboardMarkup(kb))
         return
 
     elif data.startswith("buy_title_"):
-        title_id = data.replace("buy_title_", "")
-        if title_id not in SHOP_TITLES:
-            await query.answer("❌ Ошибка: Титул не найден!", show_alert=True)
+        tid = data.replace("buy_title_", "")
+        if tid not in SHOP_TITLES: return
+        tdata = SHOP_TITLES[tid]
+        
+        if tdata["name"] in ud.get("owned_titles", []):
+            await query.answer("❌ Вы уже купили этот титул!", show_alert=True)
+            return
+        if ud.get("coins", 0) < tdata["price"]:
+            await query.answer("❌ Недостаточно монет!", show_alert=True)
             return
             
-        title_info = SHOP_TITLES[title_id]
-        title_real_name = title_info["name"]
-        
-        if title_real_name in ud.get("owned_titles", []):
-            await query.answer("📋 Вы уже купили данный титул!", show_alert=True)
-            return
-            
-        if ud.get("coins", 0) < title_info["price"]:
-            await query.answer(f"❌ Недостаточно монет! Требуется: {title_info['price']} 🪙", show_alert=True)
-            return
-            
-        users_col.update_one(
-            {"user_id": user_id}, 
-            {
-                "$inc": {"coins": -title_info["price"]}, 
-                "$addToSet": {"owned_titles": title_real_name}
-            }
-        )
-        
-        await query.answer(f"🎉 Вы успешно купили титул: {title_real_name}!", show_alert=True)
-        
-        updated_ud = get_user_all_data(user_id)
-        kb = []
-        for tid, tinfo in SHOP_TITLES.items():
-            status = " (Куплен)" if tinfo["name"] in updated_ud.get("owned_titles", []) else f" — {tinfo['price']} 🪙"
-            kb.append([InlineKeyboardButton(f"{tinfo['name']}{status}", callback_data=f"buy_title_{tid}")])
-        kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_shop")])
-        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
+        users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -tdata["price"]}, "$push": {"owned_titles": tdata["name"]}})
+        await query.answer(f"🎉 Приобретен титул {tdata['name']}!", show_alert=True)
         return
 
-    elif data == "buy_colony_upgrade":
-        cost = get_upgrade_cost(ud.get("colony_level", 1))
-        if ud.get("coins", 0) >= cost:
-            users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -cost, "colony_level": 1}})
-            await query.answer("🧬 Мутация успешна!")
-            await query.message.reply_text("🧬 Мутация завершена! Уровень муравейника повышен.")
-        else:
-            await query.answer("❌ Не хватает монет!", show_alert=True)
+    # Остальные заглушки, чтобы избежать зависаний бота
+    elif data in ["menu_bank", "menu_themes_list"]:
+        await query.answer("🏦 Этот пункт меню временно закрыт на карантин улья!", show_alert=True)
         return
 
-    elif data == "menu_craft":
-        await query.answer()
-        cards = get_user_cards(user_id)
-        if len(cards) >= 3:
-            for bc in cards[:3]: collections_col.delete_one({"_id": bc["_id"]})
-            cr = random.choice(list(REAL_CARDS_POOL.keys()))
-            new_c = {**random.choice(REAL_CARDS_POOL[cr]), "rarity": cr, "level": 1}
-            add_card_to_db(user_id, new_c)
-            await query.message.reply_text(f"🔮 Из биомассы создан: {new_c['name']}")
-        else:
-            await query.message.reply_text("❌ Для крафта нужно минимум 3 карты в инвентаре!")
-        return
-
-    elif data == "menu_bank":
-        await query.answer()
-        kb = []
-        if ud.get("coins", 0) >= 20: 
-            kb.append([InlineKeyboardButton("💰 Внести 20 🪙", callback_data="bank_deposit_20")])
-        if ud.get("bank_deposit", 0) >= 20: 
-            kb.append([InlineKeyboardButton("🏧 Снять 20 🪙", callback_data="bank_withdraw_20")])
-        kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_bonuses")])
-        await query.message.edit_text(f"🏦 *МУРАВЬИНЫЙ БАНК СБЕРЕЖЕНИЙ*\n\nНа руках: {ud.get('coins')} 🪙\nВ сейфе банка: {ud.get('bank_deposit', 0)} 🪙", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return
-
-    elif data == "bank_deposit_20":
-        if ud.get("coins", 0) >= 20:
-            users_col.update_one({"user_id": user_id}, {"$inc": {"coins": -20, "bank_deposit": 20}})
-            await query.answer("🪙 Вклад пополнен!")
-            updated_ud = get_user_all_data(user_id)
-            kb = []
-            if updated_ud.get("coins", 0) >= 20: kb.append([InlineKeyboardButton("💰 Внести 20 🪙", callback_data="bank_deposit_20")])
-            if updated_ud.get("bank_deposit", 0) >= 20: kb.append([InlineKeyboardButton("🏧 Снять 20 🪙", callback_data="bank_withdraw_20")])
-            kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_bonuses")])
-            await query.message.edit_text(f"🏦 *МУРАВЬИНЫЙ БАНК СБЕРЕЖЕНИЙ*\n\nНа руках: {updated_ud.get('coins')} 🪙\nВ сейфе банка: {updated_ud.get('bank_deposit', 0)} 🪙", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return
-
-    elif data == "bank_withdraw_20":
-        if ud.get("bank_deposit", 0) >= 20:
-            users_col.update_one({"user_id": user_id}, {"$inc": {"coins": 20, "bank_deposit": -20}})
-            await query.answer("🪙 Монеты сняты со счета!")
-            updated_ud = get_user_all_data(user_id)
-            kb = []
-            if updated_ud.get("coins", 0) >= 20: kb.append([InlineKeyboardButton("💰 Внести 20 🪙", callback_data="bank_deposit_20")])
-            if updated_ud.get("bank_deposit", 0) >= 20: kb.append([InlineKeyboardButton("🏧 Снять 20 🪙", callback_data="bank_withdraw_20")])
-            kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_bonuses")])
-            await query.message.edit_text(f"🏦 *МУРАВЬИНЫЙ БАНК СБЕРЕЖЕНИЙ*\n\nНа руках: {updated_ud.get('coins')} 🪙\nВ сейфе банка: {updated_ud.get('bank_deposit', 0)} 🪙", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return
-
-    elif data == "menu_themes_list":
-        await query.answer("В разработке", show_alert=True)
-        return
-
-# ТЕКСТОВЫЕ МАРШРУТЫ И ГЛАВНОЕ МЕНЮ РЕПЛИ
+# ==================== ДИСПЕТЧЕР ТЕКСТОВЫХ СИГНАЛОВ ====================
 async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg_text = update.message.text
-    if msg_text == "📦 Открыть пак":
+    text = update.message.text
+    if text == "📦 Открыть пак":
         await open_pack_handler(update, context)
-    elif msg_text == "👤 Профиль | 🏆 Топ":
+    elif text == "👤 Профиль | 🏆 Топ":
         await profile_and_top_handler(update, context)
-    elif msg_text == "🗂️ Коллекция":
+    elif text == "🗂️ Коллекция":
         await collection_handler(update, context)
-    elif msg_text == "⚔️ Походы & Битвы":
+    elif text == "⚔️ Походы & Битвы":
         await pvp_and_expeditions_main_handler(update, context)
-    elif msg_text == "🚀 Прокачка & Крафт":
+    elif text == "🚀 Прокачка & Крафт":
         await upgrade_and_craft_main_handler(update, context)
-    elif msg_text == "🎲 Удача & Квесты":
+    elif text == "🎲 Удача & Квесты":
         await lucky_and_quests_main_handler(update, context)
-    elif msg_text == "🛍️ Магазин":
+    elif text == "🛍️ Магазин":
         await shop_main_handler(update, context)
-    elif msg_text == "🎁 Бонусы & Донат":
+    elif text == "🎁 Бонусы & Донат":
         await bonuses_main_handler(update, context)
 
 def main():
-    init_promo_db()
     run_health_server()
+    init_promo_db()
     
     app = Application.builder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CallbackQueryHandler(main_callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_dispatcher))
+    app.add_handler(CallbackQueryHandler(main_callback_handler))
     
-    logging.info("🤖 Бот Успешно запущен на MongoDB!")
+    print("Бот успешно запущен и готов к работе!")
     app.run_polling()
 
 if __name__ == '__main__':
