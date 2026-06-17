@@ -3,11 +3,11 @@ from telebot import types
 import uuid
 import random
 
-TOKEN = "ТВОЙ_ТОКЕН_БОТА"
+TOKEN = "8701989939:AAG2z5cJ-kSkTe1k3OizAeTKHFc-OJ97Bfg"
 bot = telebot.TeleBot(TOKEN)
 
 # ⚠️ ОБЯЗАТЕЛЬНО: Поставь свой настоящий Telegram ID вместо этих цифр
-ADMIN_ID = 123456789 
+ADMIN_ID = 7501899378
 
 # ==================== БАЗА ДАННЫХ И СИСТЕМНЫЕ ПЕРЕМЕННЫЕ ====================
 players = {}
