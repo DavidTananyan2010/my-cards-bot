@@ -1,15 +1,14 @@
 import telebot
 from telebot import types
 import uuid
+import os
 
 # Укажи здесь токен своего бота
 TOKEN = "ТВОЙ_ТОКЕН_БОТА"
 bot = telebot.TeleBot(TOKEN)
 
 # ==================== БАЗА ДАННЫХ ИГРОКОВ И РЫНКА (В ОЗУ) ====================
-# Структура игрока: {"balance": 500, "inventory": [...], "titles": [...]}
 players = {}
-# Структура лота: {"lot_id": str, "seller_id": int, "item_type": "card"/"title", "item_data": {...}, "price": int}
 market_lots = []
 
 # ==================== ТАБЛИЦА ВСЕХ КАРТ ====================
@@ -29,7 +28,6 @@ REAL_CARDS = [
 EMPTY_CARDS = [{"file": None, "name": "Эта карта пуста, открой ещё 😔", "rarity": "⚪ Пустышка", "price": 0}] * 50
 CARDS = REAL_CARDS + EMPTY_CARDS
 
-# Стартовые титулы для теста рынка
 START_TITLES = ["🌲 Лесной Житель", "⚔️ Самурай", "🔮 Мистик"]
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
@@ -48,7 +46,7 @@ def get_card_by_id(user_id, card_id):
     return None
 
 # ==================== КОМАНДЫ И МЕНЮ ====================
-@bot.message_message_handler(commands=['start'])
+@bot.message_handler(commands=['start']) # ИСПРАВЛЕНО: убрана опечатка message_message_handler
 def start_cmd(message):
     user_id = message.from_user.id
     init_player(user_id)
@@ -81,9 +79,8 @@ def get_card_cmd(message):
     if chosen["file"] is None:
         bot.send_message(message.chat.id, chosen["name"])
     else:
-        # Создаем уникальную копию карты для игрока
         player_card = {
-            "id": str(uuid.uuid4())[:8], # короткий уникальный ID
+            "id": str(uuid.uuid4())[:8],
             "file": chosen["file"],
             "name": chosen["name"],
             "rarity": chosen["rarity"],
@@ -99,7 +96,13 @@ def get_card_cmd(message):
             f"💎 Редкость: {player_card['rarity']}\n"
             f"💰 Стоимость: {player_card['price']} монет"
         )
-        bot.send_message(message.chat.id, status_text)
+        
+        # Доработка: отправка реального фото, если файл существует в папке скрипта
+        if os.path.exists(player_card["file"]):
+            with open(player_card["file"], 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, caption=status_text)
+        else:
+            bot.send_message(message.chat.id, status_text + "\n\n*(Картинка файла не найдена на сервере)*")
 
 # ==================== МОДУЛЬ ИНВЕНТАРЯ И БЛОКИРОВКИ ====================
 @bot.message_handler(func=lambda msg: msg.text == "🎒 Инвентарь")
@@ -108,17 +111,16 @@ def inventory_cmd(message):
     init_player(user_id)
     
     cards = players[user_id]["inventory"]
-    if not cards:
-        bot.send_message(message.chat.id, "🎒 Твой инвентарь пуст. Получи карты в меню!")
+    # Фильтруем те, что не на продаже
+    visible_cards = [c for c in cards if not c.get("on_sale")]
+    
+    if not visible_cards:
+        bot.send_message(message.chat.id, "🎒 Твой инвентарь пуст (или все карты выставлены на рынок).")
         return
         
-    bot.send_message(message.chat.id, "📋 Твои карты (нажми, чтобы управлять или заблокировать):")
+    bot.send_message(message.chat.id, "📋 Твои карты (управляй блокировкой или продажей):")
     
-    for card in cards:
-        # Не показываем в инвентаре то, что уже выставлено на рынок
-        if card.get("on_sale"):
-            continue
-            
+    for card in visible_cards:
         lock_status = "🔒 [ЗАБЛОКИРОВАНА]" if card["locked"] else "🔓 [Свободна]"
         text = f"{card['name']} ({card['rarity']}) — {lock_status}"
         
@@ -151,7 +153,6 @@ def inventory_callback(call):
         lock_str = "заблокирована" if card["locked"] else "разблокирована"
         bot.answer_callback_query(call.id, f"Карта {lock_str}!")
         
-        # Обновляем кнопку динамически
         markup = types.InlineKeyboardMarkup()
         btn_lock = types.InlineKeyboardButton(
             text="🔓 Заблокировать" if not card["locked"] else "🔒 Разблокировать", 
@@ -171,9 +172,9 @@ def inventory_callback(call):
             reply_markup=markup
         )
 
-    elif action == "sys": # Продажа системе ("sys_sell")
+    elif action == "sys": 
         if card["locked"]:
-            bot.answer_callback_query(call.id, "❌ Нельзя продать заблокированную карту! Сначала разблокируй.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Нельзя продать заблокированную карту!", show_alert=True)
             return
         
         players[user_id]["balance"] += card["price"]
@@ -190,14 +191,13 @@ def market_main_menu(message):
         types.InlineKeyboardButton("➕ Выставить товар", callback_data="market_sell_menu"),
         types.InlineKeyboardButton("🛒 Купить товар", callback_data="market_buy_menu")
     )
-    bot.send_message(message.chat.id, "🏪 Добро пожаловать на Торговую Площадку игроков!\nЧто вы хотите сделать?", reply_markup=markup)
+    bot.send_message(message.chat.id, "🏪 Торговая Площадка игроков!\nЧто вы хотите сделать?", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("market_"))
 def market_callback(call):
     user_id = call.from_user.id
     action = call.data.replace("market_", "")
     
-    # --- Главное меню выбора категории для выставления ---
     if action == "sell_menu":
         markup = types.InlineKeyboardMarkup()
         markup.row(
@@ -213,44 +213,39 @@ def market_callback(call):
             types.InlineKeyboardButton("➕ Выставить товар", callback_data="market_sell_menu"),
             types.InlineKeyboardButton("🛒 Купить товар", callback_data="market_buy_menu")
         )
-        bot.edit_message_text("🏪 Добро пожаловать на Торговую Площадку игроков!\nЧто вы хотите сделать?", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text("🏪 Торговая Площадка игроков!\nЧто вы хотите сделать?", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    # --- Вывод доступных для продажи КАРТ ---
     elif action == "choose_card":
         cards = [c for c in players[user_id]["inventory"] if not c.get("locked") and not c.get("on_sale")]
         if not cards:
-            bot.answer_callback_query(call.id, "У вас нет доступных (или разблокированных) карт для продажи!", show_alert=True)
+            bot.answer_callback_query(call.id, "У вас нет доступных разблокированных карт!", show_alert=True)
             return
         
         markup = types.InlineKeyboardMarkup()
         for card in cards:
-            markup.add(types.InlineKeyboardButton(f"{card['name']} (Рекомендуемая: {card['price']})", callback_data=f"market_pre_card_{card['id']}"))
+            markup.add(types.InlineKeyboardButton(f"{card['name']} (Номинал: {card['price']})", callback_data=f"market_pre_card_{card['id']}"))
         markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="market_sell_menu"))
-        bot.edit_message_text("Выберите карту из инвентаря для отправки на рынок:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text("Выберите карту из инвентаря:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    # --- Пре-просмотр лота и выбор цены ---
     elif action.startswith("pre_card_"):
         card_id = action.replace("pre_card_", "")
         card = get_card_by_id(user_id, card_id)
         if not card: return
         
-        # Для простоты сделаем быстрый выбор наценки кнопками, чтобы не сбивать контекст текстовым вводом
         markup = types.InlineKeyboardMarkup()
         rec_p = card["price"]
         markup.row(
-            types.InlineKeyboardButton(f"За {int(rec_p*0.8)} (Скидка)", callback_data=f"market_confirm_card_{card_id}_{int(rec_p*0.8)}"),
-            types.InlineKeyboardButton(f"За {rec_p} (Номинал)", callback_data=f"market_confirm_card_{card_id}_{rec_p}")
+            types.InlineKeyboardButton(f"{int(rec_p*0.8)} 💰", callback_data=f"market_confirm_card_{card_id}_{int(rec_p*0.8)}"),
+            types.InlineKeyboardButton(f"{rec_p} 💰", callback_data=f"market_confirm_card_{card_id}_{rec_p}")
         )
         markup.row(
-            types.InlineKeyboardButton(f"За {int(rec_p*1.5)} (Х1.5)", callback_data=f"market_confirm_card_{card_id}_{int(rec_p*1.5)}"),
-            types.InlineKeyboardButton(f"За {rec_p*2} (Х2)", callback_data=f"market_confirm_card_{card_id}_{rec_p*2}")
+            types.InlineKeyboardButton(f"{int(rec_p*1.5)} 💰", callback_data=f"market_confirm_card_{card_id}_{int(rec_p*1.5)}"),
+            types.InlineKeyboardButton(f"{rec_p*2} 💰", callback_data=f"market_confirm_card_{card_id}_{rec_p*2}")
         )
         markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="market_sell_menu"))
-        bot.edit_message_text(f"Укажите стоимость лота для карты *{card['name']}*:", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        bot.edit_message_text(f"Укажите цену для карты *{card['name']}*:", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
-    # --- Подтверждение создания лота КАРТЫ ---
     elif action.startswith("confirm_card_"):
-        # Формат: market_confirm_card_{card_id}_{price}
         parts = action.replace("confirm_card_", "").split("_")
         card_id = parts[0]
         final_price = int(parts[1])
@@ -265,13 +260,12 @@ def market_callback(call):
             "lot_id": lot_id,
             "seller_id": user_id,
             "item_type": "card",
-            "item_data": card,
+            "item_data": card, # Ссылка сохраняется
             "price": final_price
         })
-        bot.answer_callback_query(call.id, "🎉 Карта успешно выставлена на рынок!", show_alert=True)
+        bot.answer_callback_query(call.id, "🎉 Карта выставлена на рынок!", show_alert=True)
         market_main_menu(call.message)
 
-    # --- Вывод доступных для продажи ТИТУЛОВ ---
     elif action == "choose_title":
         titles = players[user_id]["titles"]
         if not titles:
@@ -284,7 +278,6 @@ def market_callback(call):
         markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="market_sell_menu"))
         bot.edit_message_text("Выберите титул для продажи:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    # --- Выбор цены для Титула ---
     elif action.startswith("pre_title_"):
         title_name = action.replace("pre_title_", "")
         markup = types.InlineKeyboardMarkup()
@@ -296,7 +289,6 @@ def market_callback(call):
         markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="market_sell_menu"))
         bot.edit_message_text(f"Укажите стоимость для титула '{title_name}':", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    # --- Подтверждение создания лота ТИТУЛА ---
     elif action.startswith("confirm_title_"):
         parts = action.replace("confirm_title_", "").split("_")
         title_name = parts[0]
@@ -317,9 +309,7 @@ def market_callback(call):
         bot.answer_callback_query(call.id, "🎉 Титул выставлен на продажу!", show_alert=True)
         market_main_menu(call.message)
 
-    # --- ПОКУПКА ТОВАРОВ (Вывод глобальных лотов) ---
     elif action == "buy_menu":
-        # Отфильтруем лоты, чтобы не видеть свои собственные товары
         available_lots = [lot for lot in market_lots if lot["seller_id"] != user_id]
         
         if not available_lots:
@@ -338,11 +328,9 @@ def market_callback(call):
         markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="market_back_main"))
         bot.edit_message_text("🛒 Доступные товары на рынке:\nНажмите на товар, чтобы купить его.", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    # --- Процесс ПОКУПКИ конкретного лота ---
     elif action.startswith("purchase_"):
         lot_id = action.replace("purchase_", "")
         
-        # Ищем лот
         target_lot = None
         for lot in market_lots:
             if lot["lot_id"] == lot_id:
@@ -356,43 +344,45 @@ def market_callback(call):
         seller_id = target_lot["seller_id"]
         price = target_lot["price"]
         
-        # Проверяем баланс покупателя
         if players[user_id]["balance"] < price:
             bot.answer_callback_query(call.id, f"❌ Недостаточно монет! Требуется: {price}", show_alert=True)
             return
             
-        # Проводим транзакцию денег
+        # Проведение транзакции
         players[user_id]["balance"] -= price
-        init_player(seller_id) # на всякий случай
+        init_player(seller_id)
         players[seller_id]["balance"] += price
         
-        # Передаем имущество покупателю
         if target_lot["item_type"] == "card":
             card_data = target_lot["item_data"]
-            card_data["on_sale"] = False # снимаем метку рынка
-            card_data["id"] = str(uuid.uuid4())[:8] # обновляем id для нового владельца
+            card_data["on_sale"] = False
             
-            # Удаляем у старого и отдаем новому
-            if card_data in players[seller_id]["inventory"]:
-                players[seller_id]["inventory"].remove(card_data)
+            # ИСПРАВЛЕНО: Безопасное удаление оригинального объекта из инвентаря продавца по совпадению ID структуры
+            original_card = get_card_by_id(seller_id, card_data["id"])
+            if original_card:
+                players[seller_id]["inventory"].remove(original_card)
+                
+            # Передаем новый ID карты покупателю
+            card_data["id"] = str(uuid.uuid4())[:8]
             players[user_id]["inventory"].append(card_data)
             
-            bot.send_message(seller_id, f"🏪 Твой товар '{card_data['name']}' успешно куплен! Получено +{price} монет.")
+            try:
+                bot.send_message(seller_id, f"🏪 Твой товар '{card_data['name']}' успешно куплен! Получено +{price} монет.")
+            except Exception: pass
             bot.answer_callback_query(call.id, f"🎉 Вы успешно купили карту '{card_data['name']}'!", show_alert=True)
             
         elif target_lot["item_type"] == "title":
             title_name = target_lot["item_data"]["name"]
             players[user_id]["titles"].append(title_name)
             
-            bot.send_message(seller_id, f"🏪 Твой титул '{title_name}' успешно куплен! Получено +{price} монет.")
+            try:
+                bot.send_message(seller_id, f"🏪 Твой титул '{title_name}' успешно куплен! Получено +{price} монет.")
+            except Exception: pass
             bot.answer_callback_query(call.id, f"🎉 Вы успешно купили титул '{title_name}'!", show_alert=True)
 
-        # Удаляем лот из глобального рынка
         market_lots.remove(target_lot)
         market_main_menu(call.message)
 
-
-# Запуск бота
 if __name__ == '__main__':
     print("Бот успешно запущен и готов к работе!")
     bot.infinity_polling()
