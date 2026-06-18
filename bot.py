@@ -4,34 +4,37 @@ import uuid
 import random
 import time
 import os
-from threading import Thread
-from flask import Flask
+from flask import Flask, request
 from pymongo import MongoClient
-
-# 🌐 Фоновый сервер для Render (чтобы веб-служба не падала по таймауту)
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Бот колонии активен и подключен к MongoDB!"
-
-def run_web_server():
-    # Render автоматически передает нужный порт в переменную окружения PORT
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
 
 # 🔑 Токен вашего бота
 TOKEN = "8930026163:AAE5iIQSzSUOIgaeddKb0WX4T2shG9JA_LE"
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
-# 🔌 НАСТРОЙКА MONGODB
-# Код берет ссылку из настроек Environment на Render
-MONGO_URI = os.environ.get("MONGO_URI")
+# 🌐 Инициализация веб-сервера Flask
+app = Flask(__name__)
 
+# Главная страница для прохождения проверок Render (Health Check)
+@app.route('/')
+def home():
+    return "Бот колонии активен и подключен к MongoDB через Webhook!", 200
+
+# Маршрут для обработки входящих сообщений от Telegram
+@app.route(f'/{TOKEN}', methods=['POST'])
+def receive_update():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return 'Forbidden', 403
+
+# 🔌 НАСТРОЙКА MONGODB
+MONGO_URI = os.environ.get("MONGO_URI")
 if not MONGO_URI:
-    # Запасной вариант, если забыли указать переменную на Render
-    MONGO_URI = "ВАША_СТРОКА_ПОДКЛЮЧЕНИЯ_ЕСЛИ_НЕ_УКАЗАЛИ_В_ENVIRONMENT"
+    MONGO_URI = "YOUR_MONGODB_CONNECTION_STRING"
 
 client = MongoClient(MONGO_URI)
 db = client["colony_game"]       # Имя базы данных в кластере
@@ -106,7 +109,7 @@ def start_cmd(message):
     get_player(uid, message.from_user.first_name)
     bot.send_message(
         message.chat.id, 
-        f"🐜 **Приветствуем в Симуляторе Колонии насекомых!**\nРазвивайте свой муравейник, выводите мутантов и штурмуйте Арену.", 
+        f"🐜 **Приветствуем в Симуляторе Colony!**\nРазвивайте свой муравейник, выводите мутантов и штурмуйте Арену.", 
         reply_markup=main_keyboard(uid)
     )
 
@@ -284,7 +287,7 @@ def collection_cmd(message):
     uid = message.from_user.id
     p = get_player(uid, message.from_user.first_name)
     if not p["colony"]:
-        bot.send_message(message.chat.id, "Your squad is empty. Загляните в инкубатор!")
+        bot.send_message(message.chat.id, "Ваш отряд пуст. Загляните в инкубатор!")
         return
     bot.send_message(message.chat.id, f"🗂️ **Ваша армия насекомых ({len(p['colony'])}):**")
     for unit in p["colony"]:
@@ -476,7 +479,6 @@ def admin_callbacks(call):
     
     if action == "list_users":
         user_list = "📋 **Список колоний в MongoDB:**\n━━━━━━━━━━━━━━━━━━━━\n"
-        # Выгружаем список игроков прямо из облачной базы данных
         for data in users_col.find():
             user_list += f"👤 Ник: *{data.get('username','Личинка')}*\n🆔 ID: `{data.get('_id')}`\n🔋 Биомасса: `{data.get('biomass',0)}` ед.\n🐜 Особей: {len(data.get('colony', []))}\n━━━━━━━━━━━━━━━━━━━━\n"
         bot.send_message(call.message.chat.id, user_list, parse_mode="Markdown")
@@ -554,11 +556,15 @@ def process_admin_gift_amount(message, target_id):
     except ValueError:
         bot.send_message(message.chat.id, "❌ Ошибка. Введите корректное число.")
 
+# ==================== ЗАПУСК WEBHOOK И СЕРВЕРА ====================
 if __name__ == '__main__':
-    # Запускаем Flask-сервер в параллельном потоке
-    server_thread = Thread(target=run_web_server)
-    server_thread.daemon = True
-    server_thread.start()
+    # 1. Снимаем старый режим получения данных (очистка)
+    bot.remove_webhook()
+    time.sleep(0.1)
     
-    # Запускаем бесконечный опрос Telegram
-    bot.infinity_polling()
+    # 2. Устанавливаем новый Webhook, привязанный к URL твоего Render
+    bot.set_webhook(url=f"https://my-cards-bot.onrender.com/{TOKEN}")
+    
+    # 3. Запускаем Flask на порту, который автоматически выдал хостинг Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
