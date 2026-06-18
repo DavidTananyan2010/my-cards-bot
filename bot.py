@@ -4,49 +4,35 @@ import uuid
 import random
 import time
 import os
-import json
 from threading import Thread
 from flask import Flask
+from pymongo import MongoClient
 
-# 🌐 Фоновый сервер для Render.com
+# 🌐 Фоновый сервер для поддержания активности
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Бот улья активен. Кнопки обнуления добавлены!"
+    return "Бот улья активен и подключен к MongoDB!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# 🔑 Ваш рабочий токен
-TOKEN = "8930026163:AAHEFZZUK85IxLkZIVlRqZHQa59wBLcS1iM"
+# 🔑 Токен вашего бота
+TOKEN = "8930026163:AAG_lYDdSYPabdgHfRL0vLHshUSv0UcowWs"
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
-# 📁 База данных JSON
-DATA_DIR = "/data" if os.path.exists("/data") else "."
-DB_FILE = os.path.join(DATA_DIR, "database.json")
+# 🔌 НАСТРОЙКА MONGODB
+# Вставьте вашу строку подключения (URI) от MongoDB Atlas или локальной базы в переменную окружения, 
+# либо временно замените текст ниже на вашу ссылку 'mongodb+srv://...'
+MONGO_URI = os.environ.get("MONGO_URI", "ВАША_СТРОКА_ПОДКЛЮЧЕНИЯ_MONGODB")
+client = MongoClient(MONGO_URI)
+db = client["colony_game"]       # Название базы данных
+users_col = db["users"]          # Название коллекции пользователей
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_db(db_data):
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(db_data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"Ошибка сохранения БД: {e}")
-
-LOCAL_DB = load_db()
-
-# Сессии
+# Временные игровые сессии в оперативной памяти
 breeding_sessions = {}  
 pvp_lobby = {}         
 active_battles = {}    
@@ -69,7 +55,6 @@ COLONY_UNITS = [
     {"name": "Муравей-Разведчик 🔭", "desc": "Ищет территории.", "stats": {"🔭 Обзор": 95, "⚡ Скорость": 120, "⚔️ Сила": 25}, "elite": False}
 ]
 
-# 👹 Списки врагов по зонам
 ENEMIES_STANDARD = [
     {"name": "Азиатский Шершень 🐝☠️", "hp": 160, "dmg": 28},
     {"name": "Паук-Волк 🕷️", "hp": 130, "dmg": 35},
@@ -85,15 +70,15 @@ ENEMIES_FOREST = [
 
 def get_player(uid, name="Особь"):
     uid_str = str(uid)
-    if uid_str not in LOCAL_DB:
-        LOCAL_DB[uid_str] = {"_id": uid_str, "biomass": 500, "colony": [], "username": name, "last_expedition": 0}
-        save_db(LOCAL_DB)
-    return LOCAL_DB[uid_str]
+    player = users_col.find_one({"_id": uid_str})
+    if not player:
+        player = {"_id": uid_str, "biomass": 500, "colony": [], "username": name, "last_expedition": 0}
+        users_col.insert_one(player)
+    return player
 
 def save_player(uid, data):
     uid_str = str(uid)
-    LOCAL_DB[uid_str] = data
-    save_db(LOCAL_DB)
+    users_col.replace_one({"_id": uid_str}, data, upsert=True)
 
 def main_keyboard(uid):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -125,7 +110,6 @@ def profile_cmd(message):
     uid = message.from_user.id
     p = get_player(uid, message.from_user.first_name)
     
-    # Кнопка самообнуления внутри профиля
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔄 Сбросить весь прогресс", callback_data="player_self_reset_confirm"))
     
@@ -165,18 +149,17 @@ def self_reset_action(call):
         
     if action == "execute":
         uid_str = str(uid)
-        # Возвращаем к начальным значениям
-        LOCAL_DB[uid_str] = {
+        new_data = {
             "_id": uid_str, 
             "biomass": 500, 
             "colony": [], 
             "username": call.from_user.first_name, 
             "last_expedition": 0
         }
-        save_db(LOCAL_DB)
+        save_player(uid, new_data)
         bot.edit_message_text("🔄 **Прогресс успешно стерт.** Ваша Королева начинает всё с чистого листа!", call.message.chat.id, call.message.message_id)
 
-# ==================== ИНЛАЙН ЭКСПОДИЦИИ И ВЫБОР ВРАГОВ ====================
+# ==================== ЭКСПЕДИЦИИ ====================
 @bot.message_handler(func=lambda msg: msg.text == "⚔️ Экспедиции (Походы)")
 def expedition_menu(message):
     uid = message.from_user.id
@@ -197,7 +180,7 @@ def expedition_menu(message):
     markup.row(types.InlineKeyboardButton("🌲 Дремучая Чаща", callback_data="exp_zone_forest"))
     markup.row(types.InlineKeyboardButton("🔙 Назад в Муравейник", callback_data="exp_zone_back"))
     
-    bot.send_message(message.chat.id, "🗺️ **Куда направим исследовательский отряд муравьев?**\nВыбор локации и видов врагов полностью за вами:", reply_markup=markup)
+    bot.send_message(message.chat.id, "🗺️ **Куда направим исследовательский отряд муравьев?**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("exp_zone_"))
 def expedition_zone_callback(call):
@@ -244,7 +227,6 @@ def show_pve_turn(chat_id, uid):
     bot.send_message(
         chat_id, 
         f"📍 Локация: **{battle['zone']}**\n"
-        f"🚨 **Замечен опасный противник!**\n\n"
         f"👹 **Враг:** {battle['enemy']['name']} (Здоровье: {battle['enemy']['hp']})\n"
         f"🛡️ **Защита вашего отряда:** {battle['squad_hp']}\n\n"
         f"Ваш приказ отряду:", reply_markup=markup
@@ -478,7 +460,7 @@ def pvp_turn_callback(call):
         else:
             send_pvp_controls(b_id)
 
-# ==================== АДМИН ПАНЕЛЬ И ОБНУЛЕНИЕ СТОРОННИХ ПОЛЬЗОВАТЕЛЕЙ ====================
+# ==================== АДМИН ПАНЕЛЬ (ОБНУЛЕНИЕ ЧЕРЕЗ MONGODB) ====================
 @bot.message_handler(func=lambda msg: msg.text == "👑 Управление Ульем" and msg.from_user.id == ADMIN_ID)
 def admin_cmd(message):
     markup = types.InlineKeyboardMarkup()
@@ -493,8 +475,9 @@ def admin_callbacks(call):
     
     if action == "list_users":
         user_list = "📋 **Список зарегистрированных колоний:**\n━━━━━━━━━━━━━━━━━━━━\n"
-        for uid, data in LOCAL_DB.items():
-            user_list += f"👤 Игрок: *{data.get('username','Игрок')}*\n🆔 ID: `{uid}`\n🔋 Биомасса: `{data.get('biomass',0)}` ед.\n🐜 Особей: {len(data.get('colony', []))}\n━━━━━━━━━━━━━━━━━━━━\n"
+        # Получаем всех игроков из базы MongoDB
+        for data in users_col.find():
+            user_list += f"👤 Игрок: *{data.get('username','Игрок')}*\n🆔 ID: `{data.get('_id')}`\n🔋 Биомасса: `{data.get('biomass',0)}` ед.\n🐜 Особей: {len(data.get('colony', []))}\n━━━━━━━━━━━━━━━━━━━━\n"
         bot.send_message(call.message.chat.id, user_list, parse_mode="Markdown")
         
     elif action == "give_other":
@@ -507,18 +490,15 @@ def admin_callbacks(call):
         msg = bot.send_message(call.message.chat.id, "🧹 **РЕЖИМ ОБНУЛЕНИЯ**\nВведите Telegram ID игрока, чей прогресс нужно полностью стереть:")
         bot.register_next_step_handler(msg, process_admin_clear_id)
 
-# Шаг админки для полной очистки игрока
 def process_admin_clear_id(message):
     if message.from_user.id != ADMIN_ID: return
     target_id = message.text.strip()
     
-    if target_id not in LOCAL_DB:
-        bot.send_message(message.chat.id, f"❌ Пользователь с ID `{target_id}` не найден в базе данных.", parse_mode="Markdown")
+    p = users_col.find_one({"_id": target_id})
+    if not p:
+        bot.send_message(message.chat.id, f"❌ Пользователь с ID `{target_id}` не найден в MongoDB.", parse_mode="Markdown")
         return
         
-    p = LOCAL_DB[target_id]
-    
-    # Кнопки финального подтверждения для админа
     markup = types.InlineKeyboardMarkup()
     markup.row(
         types.InlineKeyboardButton("💥 Удалить прогресс", callback_data=f"adm_force_clear_yes_{target_id}"),
@@ -532,7 +512,6 @@ def process_admin_clear_id(message):
         reply_markup=markup
     )
 
-# Обработка окончательного решения админа по сбросу
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_force_clear_") and call.from_user.id == ADMIN_ID)
 def execute_admin_clear_callback(call):
     data = call.data.replace("adm_force_clear_", "").split("_")
@@ -544,24 +523,22 @@ def execute_admin_clear_callback(call):
         
     if decision == "yes":
         target_id = data[1]
-        if target_id in LOCAL_DB:
-            username = LOCAL_DB[target_id].get('username', 'Игрок')
-            
-            # Возвращаем дефолтные параметры в базу
-            LOCAL_DB[target_id] = {
+        p = users_col.find_one({"_id": target_id})
+        if p:
+            username = p.get('username', 'Игрок')
+            new_data = {
                 "_id": target_id,
                 "biomass": 500,
                 "colony": [],
                 "username": username,
                 "last_expedition": 0
             }
-            save_db(LOCAL_DB)
+            save_player(target_id, new_data)
             
-            bot.edit_message_text(f"💥 **Муравейник игрока {username} (ID: {target_id}) успешно стерт и обнулен!**", call.message.chat.id, call.message.message_id)
+            bot.edit_message_text(f"💥 **Муравейник игрока {username} (ID: {target_id}) успешно стерт в MongoDB!**", call.message.chat.id, call.message.message_id)
             
-            # Уведомляем бедолагу в ЛС
             try:
-                bot.send_message(int(target_id), "⚠️ **Внимание!** Администратор полностью обнулил ваш игровой прогресс. Вы можете начать заново с команды /start.")
+                bot.send_message(int(target_id), "⚠️ **Внимание!** Администратор полностью обнулил ваш игровой прогресс.")
             except Exception:
                 pass
 
