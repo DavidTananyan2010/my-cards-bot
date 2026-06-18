@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 pyTelegramBotAPI
 pymongo[srv]
+pyTelegramBotAPI
+Flask
