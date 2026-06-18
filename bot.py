@@ -21,7 +21,7 @@ def run_web_server():
     app.run(host='0.0.0.0', port=port)
 
 # 🔑 Токен вашего бота
-TOKEN = "8930026163:AAG_lYDdSYPabdgHfRL0vLHshUSv0UcowWs"
+TOKEN = "8930026163:AAHEFZZUK85IxLkZIVlRqZHQa59wBLcS1iM"
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 7501899378
 
